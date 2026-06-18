@@ -21,7 +21,7 @@ function toggleSections(showSection, icon) {
 }
 
 function checkBLECapability() {
-  updateAuthel("Checking if wire-pod can use BLE directly...");
+  updateAuthel("Checking if Squire-Pod can use BLE directly...");
   fetch("/api-ble/init")
     .then((response) => response.text())
     .then((response) => {
@@ -107,13 +107,13 @@ function connectRobot(id) {
       if (response.includes("success")) {
         createPinEntry();
       } else {
-        alert("Error connecting. WirePod will restart and this will return to the first screen of setup.");
-        updateAuthel("Waiting for WirePod to restart...");
+        alert("Error connecting. Squire-Pod will restart and this will return to the first screen of setup.");
+        updateAuthel("Waiting for Squire-Pod to restart...");
         setTimeout(checkBLECapability, 3000);
       }
     }).catch(() => {
-      alert("Error connecting. WirePod will restart and this will return to the first screen of setup.");
-      updateAuthel("Waiting for WirePod to restart...");
+      alert("Error connecting. Squire-Pod will restart and this will return to the first screen of setup.");
+      updateAuthel("Waiting for Squire-Pod to restart...");
       setTimeout(checkBLECapability, 3000);
     })
 }
@@ -253,7 +253,7 @@ function showRecoveryInstructions() {
     <p>3. Click 'Begin Scanning' and pair with your Vector.</p>
     <button onclick="scanRobots(false)">Begin Scanning</button>
   `;
-  alert("Your bot is not on the correct firmware for wire-pod. Follow the directions to put him in recovery mode.");
+  alert("Your bot is not on the correct firmware for Squire-Pod. Follow the directions to put him in recovery mode.");
 }
 
 function showDevWarning() {
@@ -278,7 +278,7 @@ function doOTA(url) {
             .then((otaResponse) => {
               updateAuthel(otaResponse);
               if (otaResponse.includes("complete")) {
-                alert("The OTA update is complete. When the bot reboots, follow the steps to re-pair the bot with wire-pod. wire-pod will then authenticate the robot and setup will be complete.");
+                alert("The OTA update is complete. When the bot reboots, follow the steps to re-pair the bot with Squire-Pod. Squire-Pod will then authenticate the robot and setup will be complete.");
                 OTAUpdating = false;
                 clearInterval(interval);
                 checkBLECapability();

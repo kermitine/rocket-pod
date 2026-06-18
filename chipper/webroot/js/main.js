@@ -45,7 +45,7 @@ function checkInited() {
   fetch("/api/is_api_v3").then((response) => {
     if (!response.ok) {
       alert(
-        "This webroot does not match with the wire-pod binary. Some functionality will be broken. There was either an error during the last update, or you did not precisely follow the update guide. https://github.com/kercre123/wire-pod/wiki/Things-to-Know#updating-wire-pod"
+        "This Squire-Pod web UI does not match with the server binary. Some functionality will be broken. There was either an error during the last update, or you did not precisely follow the update guide. https://github.com/kercre123/wire-pod/wiki/Things-to-Know#updating-wire-pod"
       );
     }
   });
@@ -1029,16 +1029,16 @@ function checkUpdate() {
             displayMessage("aUpdate", `You are on the latest version.`);
             getE("updateGuideLink").style.display = "none";
           } else {
-            displayMessage("aUpdate", `A newer version of WirePod (commit: ${parsed.currentcommit}) is available! Use this guide to update WirePod: `);
+            displayMessage("aUpdate", `A newer version of Squire-Pod (commit: ${parsed.currentcommit}) is available! Use this guide to update Squire-Pod: `);
             getE("updateGuideLink").style.display = "block";
           }
           displayMessage("cVersion", `Installed Commit: ${parsed.installedcommit}`);
         } else {
           displayMessage("cVersion", `Installed Version: ${parsed.installedversion}`);
-          displayMessage("cCommit", `Based on wire-pod commit: ${parsed.installedcommit}`);
+          displayMessage("cCommit", `Based on upstream commit: ${parsed.installedcommit}`);
           getE("cCommit").style.display = "block";
           if (parsed.avail) {
-            displayMessage("aUpdate", `A newer version of WirePod (${parsed.currentversion}) is available! Use this guide to update WirePod: `);
+            displayMessage("aUpdate", `A newer version of Squire-Pod (${parsed.currentversion}) is available! Use this guide to update Squire-Pod: `);
             getE("updateGuideLink").style.display = "block";
           } else {
             displayMessage("aUpdate", "You are on the latest version.");

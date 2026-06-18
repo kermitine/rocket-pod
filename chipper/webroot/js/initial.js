@@ -88,10 +88,10 @@ function setConn() {
     .then((response) => response.text())
     .then((response) => {
       if (response) {
-        updateSetupStatus("Setup is complete! Wire-pod has started. Redirecting to main page...");
+        updateSetupStatus("Setup is complete! Squire-Pod has started. Redirecting to main page...");
         setTimeout(() => window.location.href = "/", 3000);
       } else {
-        updateSetupStatus("Error setting up wire-pod, check the logs");
+        updateSetupStatus("Error setting up Squire-Pod, check the logs");
         document.getElementById("config-options").style.display = "block";
       }
     });
