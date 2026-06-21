@@ -86,6 +86,31 @@ func TestClassifyConfirmationIntent(t *testing.T) {
 	}
 }
 
+func TestMatchesPartialAffirmativeKeyphrase(t *testing.T) {
+	tests := []struct {
+		name      string
+		voiceText string
+		keyphrase string
+		wantMatch bool
+	}{
+		{name: "ok", voiceText: "ok", keyphrase: "ok", wantMatch: true},
+		{name: "okay", voiceText: "okay that works", keyphrase: "okay", wantMatch: true},
+		{name: "sounds good", voiceText: "that sounds good", keyphrase: "sounds good", wantMatch: true},
+		{name: "short word boundary", voiceText: "look over there", keyphrase: "ok", wantMatch: false},
+		{name: "negated okay", voiceText: "not okay", keyphrase: "okay", wantMatch: false},
+		{name: "negative prefix", voiceText: "no, that sounds good", keyphrase: "sounds good", wantMatch: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesPartialIntentKeyphrase("intent_imperative_affirmative", tt.voiceText, tt.keyphrase)
+			if got != tt.wantMatch {
+				t.Fatalf("matchesPartialIntentKeyphrase() = %v, want %v", got, tt.wantMatch)
+			}
+		})
+	}
+}
+
 func TestNotifyConfigUpdatedInvalidatesExistingTasks(t *testing.T) {
 	previousGeneration := currentConfigurationGeneration()
 	defer func() {

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	pb "github.com/digital-dream-labs/api/go/chipperpb"
 	"github.com/fforchino/vector-go-sdk/pkg/vector"
@@ -583,7 +585,7 @@ func ProcessTextAll(req interface{}, voiceText string, intents []vars.JsonIntent
 			continue
 		}
 		for _, c := range b.Keyphrases {
-			if strings.Contains(voiceText, strings.ToLower(c)) {
+			if matchesPartialIntentKeyphrase(b.Name, voiceText, c) {
 				logger.Println("Bot " + botSerial + " Partial match for intent " + b.Name)
 				IntentPass(req, b.Name, voiceText, nil, false)
 				return true
@@ -591,6 +593,42 @@ func ProcessTextAll(req interface{}, voiceText string, intents []vars.JsonIntent
 		}
 	}
 
+	return false
+}
+
+func matchesPartialIntentKeyphrase(intentName string, voiceText string, keyphrase string) bool {
+	voiceText = strings.ToLower(strings.TrimSpace(voiceText))
+	keyphrase = strings.ToLower(strings.TrimSpace(keyphrase))
+	if keyphrase == "" {
+		return false
+	}
+	if intentName == "intent_imperative_affirmative" && containsNegativeCue(voiceText) {
+		return false
+	}
+	if utf8.RuneCountInString(keyphrase) <= 2 {
+		for _, token := range strings.FieldsFunc(voiceText, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+		}) {
+			if token == keyphrase {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.Contains(voiceText, keyphrase)
+}
+
+func containsNegativeCue(voiceText string) bool {
+	negativeCues := map[string]struct{}{
+		"no": {}, "not": {}, "dont": {}, "don't": {}, "never": {}, "nope": {}, "nah": {},
+	}
+	for _, token := range strings.FieldsFunc(strings.ToLower(voiceText), func(r rune) bool {
+		return !unicode.IsLetter(r) && r != '\''
+	}) {
+		if _, found := negativeCues[token]; found {
+			return true
+		}
+	}
 	return false
 }
 

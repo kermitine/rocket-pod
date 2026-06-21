@@ -119,14 +119,14 @@
 		"keyphrases" : ["black", "cards", "game", "play blackjack" ],
 		"requiresexact": false
 	},
-		{	
+	{
 		"name": "intent_imperative_affirmative",
-		"keyphrases" : ["yes", "correct", "sure", "yes please" ],
+		"keyphrases" : ["yes", "correct", "sure", "yes please", "ok", "okay", "yep", "yeah", "absolutely", "definitely", "sounds good", "of course", "please do", "go ahead", "that works" ],
 		"requiresexact": false
 	},
-	{	
+	{
 		"name": "intent_imperative_negative", 
-		"keyphrases" : ["no", "dont", "no thanks" ],
+		"keyphrases" : ["no", "dont", "don't", "no thanks", "no thank you", "nope", "nah", "not really" ],
 		"requiresexact": true
 	},
 	{	
