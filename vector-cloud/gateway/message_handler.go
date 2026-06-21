@@ -806,7 +806,7 @@ func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int,
 
 		firstByte := (pixelsPerChunk * 2) * i
 		finalByte := firstByte + (pixelCount * 2)
-		slicedBinaryData := in.FaceData[firstByte:finalByte] // TODO: Make this not implode on empty
+		slicedBinaryData := in.FaceData[firstByte:finalByte]
 
 		for j := 0; j < pixelCount; j++ {
 			uintAsBytes := slicedBinaryData[j*2 : j*2+2]
@@ -827,9 +827,16 @@ func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int,
 
 func (service *rpcService) DisplayFaceImageRGB(ctx context.Context, in *extint.DisplayFaceImageRGBRequest) (*extint.DisplayFaceImageRGBResponse, error) {
 	const totalPixels = 17664
-	chunkCount := (totalPixels + faceImagePixelsPerChunk + 1) / faceImagePixelsPerChunk
+	const bytesPerPixel = 2
+	const expectedBytes = totalPixels * bytesPerPixel
+	if in == nil || len(in.FaceData) != expectedBytes {
+		return nil, grpc.Errorf(codes.InvalidArgument, "face_data must contain exactly %d bytes, got %d", expectedBytes, len(in.GetFaceData()))
+	}
+	chunkCount := (totalPixels + faceImagePixelsPerChunk - 1) / faceImagePixelsPerChunk
 
-	SendFaceDataAsChunks(in, chunkCount, faceImagePixelsPerChunk, totalPixels)
+	if err := SendFaceDataAsChunks(in, chunkCount, faceImagePixelsPerChunk, totalPixels); err != nil {
+		return nil, err
+	}
 
 	return &extint.DisplayFaceImageRGBResponse{
 		Status: &extint.ResponseStatus{

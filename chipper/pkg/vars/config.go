@@ -2,6 +2,7 @@ package vars
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
@@ -38,7 +39,7 @@ type apiConfig struct {
 		Temperature            float32 `json:"temp"`
 	} `json:"knowledge"`
 	Productivity ProductivityConfig `json:"productivity"`
-	STT struct {
+	STT          struct {
 		Service  string `json:"provider"`
 		Language string `json:"language"`
 	} `json:"STT"`
@@ -52,9 +53,21 @@ type apiConfig struct {
 }
 
 func WriteConfigToDisk() {
+	if err := WriteConfigToDiskWithError(); err != nil {
+		logger.Println("Failed to write API configuration: " + err.Error())
+	}
+}
+
+func WriteConfigToDiskWithError() error {
 	logger.Println("Configuration changed, writing to disk")
-	writeBytes, _ := json.Marshal(APIConfig)
-	os.WriteFile(ApiConfigPath, writeBytes, 0644)
+	writeBytes, err := json.Marshal(APIConfig)
+	if err != nil {
+		return fmt.Errorf("marshal API configuration: %w", err)
+	}
+	if err := os.WriteFile(ApiConfigPath, writeBytes, 0644); err != nil {
+		return fmt.Errorf("write API configuration: %w", err)
+	}
+	return nil
 }
 
 func CreateConfigFromEnv() {

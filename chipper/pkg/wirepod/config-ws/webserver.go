@@ -224,15 +224,33 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider := r.FormValue("provider")
+	provider := strings.ToLower(strings.TrimSpace(r.FormValue("provider")))
 	key := r.FormValue("key")
 	urlVal := r.FormValue("url")
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	targetRobot := r.FormValue("target_robot")
-	manualConfig := r.FormValue("manual_config")
+	manualConfig := strings.TrimSpace(r.FormValue("manual_config"))
+	if manualConfig == "" {
+		manualConfig = "[]"
+	}
+	var reminders []productivity.ManualReminder
+	if err := json.Unmarshal([]byte(manualConfig), &reminders); err != nil {
+		http.Error(w, "Invalid manual reminder configuration", http.StatusBadRequest)
+		return
+	}
+	if reminders == nil {
+		reminders = []productivity.ManualReminder{}
+	}
+	canonicalConfig, err := json.Marshal(reminders)
+	if err != nil {
+		http.Error(w, "Unable to encode manual reminder configuration", http.StatusInternalServerError)
+		return
+	}
+	manualConfig = string(canonicalConfig)
 
-	vars.APIConfig.Productivity.Enable = (provider != "" && provider != "None")
+	previousConfig := vars.APIConfig.Productivity
+	vars.APIConfig.Productivity.Enable = provider == "todoist"
 	vars.APIConfig.Productivity.Provider = provider
 	vars.APIConfig.Productivity.Key = strings.TrimSpace(key)
 	vars.APIConfig.Productivity.Url = strings.TrimSpace(urlVal)
@@ -271,7 +289,13 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	vars.WriteConfigToDisk()
+	if err := vars.WriteConfigToDiskWithError(); err != nil {
+		vars.APIConfig.Productivity = previousConfig
+		logger.Println("Failed to persist productivity settings: " + err.Error())
+		http.Error(w, "Unable to save productivity settings", http.StatusInternalServerError)
+		return
+	}
+	productivity.NotifyConfigUpdated()
 	fmt.Fprint(w, "Productivity settings applied.")
 }
 

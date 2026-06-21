@@ -59,6 +59,7 @@ var (
 	lastProcessedTasks = make(map[string]bool)
 	lastManualRun      = make(map[string]string)
 	schedulerQuit      = make(chan bool)
+	schedulerRefresh   = make(chan struct{}, 1)
 	externalApiClient  = &http.Client{Timeout: 15 * time.Second}
 )
 
@@ -83,12 +84,18 @@ func schedulerLoop() {
 		select {
 		case <-schedulerQuit:
 			return
+		case <-schedulerRefresh:
+			nextRandomRun = make(map[string]time.Time)
+			lastProcessedTasks = make(map[string]bool)
+			lastManualRun = make(map[string]string)
+			logger.Println("Productivity: Applied updated scheduler configuration")
 		case <-externalApiTicker.C:
 			provider := vars.APIConfig.Productivity.Provider
 			if provider == "todoist" {
 				checkTodoistTasks()
 			}
 		case <-ticker.C:
+			generation := currentConfigurationGeneration()
 			configStr := vars.APIConfig.Productivity.ManualConfig
 			if configStr == "" || configStr == "[]" {
 				continue
@@ -102,12 +109,13 @@ func schedulerLoop() {
 					continue
 				}
 			}
-			checkManualReminders(targetBot, configStr)
+			checkManualReminders(targetBot, configStr, generation)
 		}
 	}
 }
 
 func checkTodoistTasks() {
+	generation := currentConfigurationGeneration()
 	token := vars.APIConfig.Productivity.Key
 	if token == "" {
 		return
@@ -146,6 +154,9 @@ func checkTodoistTasks() {
 	}
 
 	for _, task := range allTasks {
+		if generation != currentConfigurationGeneration() {
+			return
+		}
 		if task.Due == nil || task.Due.Datetime == "" {
 			continue
 		}
@@ -159,10 +170,11 @@ func checkTodoistTasks() {
 			if !lastProcessedTasks[task.ID] {
 				logger.Println("Productivity: Todoist task matched: " + task.Content)
 				taskQueue <- Task{
-					ID:       task.ID,
-					RobotESN: targetBot,
-					Phrases:  []string{task.Content},
-					Source:   "todoist",
+					ID:                      task.ID,
+					RobotESN:                targetBot,
+					Phrases:                 []string{task.Content},
+					Source:                  "todoist",
+					configurationGeneration: generation,
 				}
 				lastProcessedTasks[task.ID] = true
 			}
@@ -170,7 +182,7 @@ func checkTodoistTasks() {
 	}
 }
 
-func checkManualReminders(esn string, configStr string) {
+func checkManualReminders(esn string, configStr string, generation uint64) {
 	var reminders []ManualReminder
 	if err := json.Unmarshal([]byte(configStr), &reminders); err != nil {
 		return
@@ -182,6 +194,9 @@ func checkManualReminders(esn string, configStr string) {
 	currentHour := now.Hour()
 
 	for _, r := range reminders {
+		if generation != currentConfigurationGeneration() {
+			return
+		}
 		if !r.Enabled {
 			continue
 		}
@@ -238,18 +253,19 @@ func checkManualReminders(esn string, configStr string) {
 		if shouldRun {
 			select {
 			case taskQueue <- Task{
-				ID:                     r.ID,
-				RobotESN:               esn,
-				Phrases:                r.Phrases,
-				Image:                  r.Image,
-				Source:                 "manual",
-				RequireConfirmation:    r.RequireConfirmation,
-				RequireRecognizedFace:  r.RequireRecognizedFace,
-				RecognizedFaceName:     r.RecognizedFaceName,
-				FaceWaitMinutes:        r.FaceWaitMinutes,
-				ApproachRecognizedFace: r.ApproachRecognizedFace,
-				ApproachDistanceMM:     r.ApproachDistanceMM,
-				SnoozeMinutes:          r.SnoozeMinutes,
+				ID:                      r.ID,
+				RobotESN:                esn,
+				Phrases:                 r.Phrases,
+				Image:                   r.Image,
+				Source:                  "manual",
+				RequireConfirmation:     r.RequireConfirmation,
+				RequireRecognizedFace:   r.RequireRecognizedFace,
+				RecognizedFaceName:      r.RecognizedFaceName,
+				FaceWaitMinutes:         r.FaceWaitMinutes,
+				ApproachRecognizedFace:  r.ApproachRecognizedFace,
+				ApproachDistanceMM:      r.ApproachDistanceMM,
+				SnoozeMinutes:           r.SnoozeMinutes,
+				configurationGeneration: generation,
 			}:
 				logger.Println("Productivity: Scheduled manual task " + r.ID)
 				if runKey != "" {

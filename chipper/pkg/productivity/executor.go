@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/digital-dream-labs/api/go/chipperpb"
@@ -28,19 +29,20 @@ import (
 )
 
 type Task struct {
-	ID                     string
-	RobotESN               string
-	Phrases                []string
-	Image                  string
-	Source                 string
-	RetryCount             int
-	RequireConfirmation    bool
-	RequireRecognizedFace  bool
-	RecognizedFaceName     string
-	FaceWaitMinutes        int
-	ApproachRecognizedFace bool
-	ApproachDistanceMM     int
-	SnoozeMinutes          int
+	ID                      string
+	RobotESN                string
+	Phrases                 []string
+	Image                   string
+	Source                  string
+	RetryCount              int
+	RequireConfirmation     bool
+	RequireRecognizedFace   bool
+	RecognizedFaceName      string
+	FaceWaitMinutes         int
+	ApproachRecognizedFace  bool
+	ApproachDistanceMM      int
+	SnoozeMinutes           int
+	configurationGeneration uint64
 }
 
 type recognizedFaceMatch struct {
@@ -53,6 +55,19 @@ type systemIntentResponseStruct struct {
 	ReturnIntent string `json:"returnIntent"`
 }
 
+type confirmationResult int
+
+type behaviorControlStream interface {
+	Send(*vectorpb.BehaviorControlRequest) error
+	Recv() (*vectorpb.BehaviorControlResponse, error)
+}
+
+const (
+	confirmationTimedOut confirmationResult = iota
+	confirmationAccepted
+	confirmationDeclined
+)
+
 var (
 	taskQueue                  = make(chan Task, 10)
 	defaultFaceWaitMinutes     = 5
@@ -60,6 +75,7 @@ var (
 	minApproachDistanceMM      = 50
 	maxApproachDistanceMM      = 1000
 	approachDriveSpeedMMPerSec = 80
+	configurationGeneration    uint64
 )
 
 func executorLoop() {
@@ -72,6 +88,7 @@ func executorLoop() {
 }
 
 func InjectTestTask(task Task) {
+	task.configurationGeneration = currentConfigurationGeneration()
 	select {
 	case taskQueue <- task:
 		logger.Println("Productivity: Test task pushed")
@@ -81,6 +98,9 @@ func InjectTestTask(task Task) {
 }
 
 func retryTask(task Task, reason string) {
+	if !taskIsCurrent(task) {
+		return
+	}
 	if task.RetryCount >= 4 {
 		logger.Println("Productivity: Task failed permanently: " + reason)
 		return
@@ -89,11 +109,20 @@ func retryTask(task Task, reason string) {
 	backoff := math.Pow(2, float64(task.RetryCount))
 	go func() {
 		time.Sleep(time.Duration(backoff) * time.Second)
-		taskQueue <- task
+		if taskIsCurrent(task) {
+			taskQueue <- task
+		}
 	}()
 }
 
 func snoozeTask(task Task) {
+	if task.Source == "test" {
+		logger.Println("Productivity: Test reminders are one-shot and will not be snoozed")
+		return
+	}
+	if !taskIsCurrent(task) {
+		return
+	}
 	duration := 10 * time.Minute
 	if task.SnoozeMinutes > 0 {
 		duration = time.Duration(task.SnoozeMinutes) * time.Minute
@@ -102,8 +131,28 @@ func snoozeTask(task Task) {
 	go func() {
 		time.Sleep(duration)
 		task.RetryCount = 0
-		taskQueue <- task
+		if taskIsCurrent(task) {
+			taskQueue <- task
+		}
 	}()
+}
+
+// NotifyConfigUpdated invalidates work created from an older productivity
+// configuration. Sleeping work is discarded before it can reach the robot.
+func NotifyConfigUpdated() {
+	atomic.AddUint64(&configurationGeneration, 1)
+	select {
+	case schedulerRefresh <- struct{}{}:
+	default:
+	}
+}
+
+func currentConfigurationGeneration() uint64 {
+	return atomic.LoadUint64(&configurationGeneration)
+}
+
+func taskIsCurrent(task Task) bool {
+	return task.configurationGeneration == currentConfigurationGeneration()
 }
 
 func getReminderState(id string) (bool, bool) {
@@ -124,6 +173,10 @@ func getReminderState(id string) (bool, bool) {
 }
 
 func processTask(task Task) {
+	if !taskIsCurrent(task) {
+		logger.Println("Productivity: Discarding task from an outdated configuration")
+		return
+	}
 	if task.ID != "" {
 		exists, enabled := getReminderState(task.ID)
 		if task.Source == "manual" {
@@ -167,6 +220,9 @@ func processTask(task Task) {
 		matchedFace = face
 		logger.Println("Productivity: Recognized face matched for task " + task.ID + ": " + face.Name)
 	}
+	if !taskIsCurrent(task) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Second)
 	defer cancel()
@@ -177,43 +233,18 @@ func processTask(task Task) {
 		return
 	}
 
-	req := &vectorpb.BehaviorControlRequest{
-		RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-			ControlRequest: &vectorpb.ControlRequest{
-				Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-			},
-		},
-	}
-
-	if err := bcClient.Send(req); err != nil {
-		retryTask(task, "Send BC request failed")
+	if err := acquireBehaviorControl(bcClient); err != nil {
+		retryTask(task, "Behavior control request failed: "+err.Error())
 		return
 	}
-
-	granted := false
-	for {
-		resp, err := bcClient.Recv()
-		if err != nil {
-			retryTask(task, "BC recv failed")
-			return
-		}
-		if resp.GetControlGrantedResponse() != nil {
-			granted = true
-			break
-		}
-	}
-
-	if !granted {
-		return
-	}
+	controlHeld := true
 
 	defer func() {
-		releaseReq := &vectorpb.BehaviorControlRequest{
-			RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
-				ControlRelease: &vectorpb.ControlRelease{},
-			},
+		if controlHeld {
+			if err := releaseBehaviorControl(bcClient); err != nil {
+				logger.Println("Productivity: Failed to release behavior control: " + err.Error())
+			}
 		}
-		bcClient.Send(releaseReq)
 	}()
 
 	battResp, err := robot.Conn.BatteryState(ctx, &vectorpb.BatteryStateRequest{})
@@ -225,6 +256,9 @@ func processTask(task Task) {
 		}
 		time.Sleep(5 * time.Second)
 	}
+	if !taskIsCurrent(task) {
+		return
+	}
 
 	if task.ApproachRecognizedFace && matchedFace.ID > 0 {
 		approachRecognizedFace(ctx, robot, matchedFace, task.ApproachDistanceMM)
@@ -234,35 +268,118 @@ func processTask(task Task) {
 		fullPath := filepath.Join(ProductivityImgPath, task.Image)
 		if _, err := os.Stat(fullPath); err == nil {
 			imgData, err := convertImageToVectorFace(fullPath)
-			if err == nil {
-				robot.Conn.DisplayFaceImageRGB(ctx, &vectorpb.DisplayFaceImageRGBRequest{
+			if err != nil {
+				logger.Println("Productivity: Face image conversion failed: " + err.Error())
+			} else {
+				if _, err := robot.Conn.DisplayFaceImageRGB(ctx, &vectorpb.DisplayFaceImageRGBRequest{
 					FaceData:         imgData,
 					DurationMs:       30000,
 					InterruptRunning: true,
-				})
+				}); err != nil {
+					logger.Println("Productivity: Face image display failed: " + err.Error())
+				}
 			}
+		} else {
+			logger.Println("Productivity: Face image is unavailable: " + err.Error())
 		}
 	}
 
 	if len(task.Phrases) > 0 {
 		phrase := task.Phrases[rand.Intn(len(task.Phrases))]
 		if phrase != "" {
-			robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{
+			if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{
 				Text:           phrase,
 				UseVectorVoice: true,
 				DurationScalar: 1.0,
-			})
+			}); err != nil {
+				logger.Println("Productivity: Reminder speech failed: " + err.Error())
+			}
 		}
 	}
 
 	if task.RequireConfirmation {
+		if !taskIsCurrent(task) {
+			return
+		}
 		logger.Println("Productivity: Waiting for confirmation response...")
-		if waitForConfirmation(ctx, robot, bcClient, task.RobotESN) {
+		if err := releaseBehaviorControl(bcClient); err != nil {
+			controlHeld = false
+			logger.Println("Productivity: Failed to release behavior control for confirmation: " + err.Error())
+			snoozeTask(task)
+			return
+		}
+		controlHeld = false
+
+		result, err := waitForConfirmation(ctx, robot, task.RobotESN)
+		if err != nil {
+			logger.Println("Productivity: Confirmation wait failed: " + err.Error())
+		}
+		if !taskIsCurrent(task) {
+			return
+		}
+
+		// A release followed by another request is supported on the same stream,
+		// but no SDK action is safe until VIC explicitly grants control again.
+		if err := acquireBehaviorControl(bcClient); err != nil {
+			logger.Println("Productivity: Failed to reacquire behavior control: " + err.Error())
+			if result != confirmationAccepted {
+				snoozeTask(task)
+			}
+			return
+		}
+		controlHeld = true
+
+		switch result {
+		case confirmationAccepted:
+			if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "Great!", UseVectorVoice: true}); err != nil {
+				logger.Println("Productivity: Confirmation response speech failed: " + err.Error())
+			}
 			logger.Println("Productivity: Confirmation successful.")
-		} else {
+		case confirmationDeclined:
+			if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "Ok, I'll remind you again soon.", UseVectorVoice: true}); err != nil {
+				logger.Println("Productivity: Confirmation response speech failed: " + err.Error())
+			}
+			snoozeTask(task)
+		default:
+			if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "I didn't hear anything. I'll remind you later.", UseVectorVoice: true}); err != nil {
+				logger.Println("Productivity: Confirmation response speech failed: " + err.Error())
+			}
 			snoozeTask(task)
 		}
 	}
+}
+
+func acquireBehaviorControl(bcClient behaviorControlStream) error {
+	req := &vectorpb.BehaviorControlRequest{
+		RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
+			ControlRequest: &vectorpb.ControlRequest{
+				Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
+			},
+		},
+	}
+	if err := bcClient.Send(req); err != nil {
+		return err
+	}
+	for {
+		resp, err := bcClient.Recv()
+		if err != nil {
+			return err
+		}
+		if resp != nil && resp.GetControlGrantedResponse() != nil {
+			return nil
+		}
+		if resp != nil && resp.GetControlLostEvent() != nil {
+			return fmt.Errorf("control was lost before it was granted")
+		}
+	}
+}
+
+func releaseBehaviorControl(bcClient behaviorControlStream) error {
+	return bcClient.Send(&vectorpb.BehaviorControlRequest{
+		RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
+			ControlRelease: &vectorpb.ControlRelease{},
+		},
+	})
 }
 
 func waitForRecognizedFace(ctx context.Context, robot *vector.Vector, desiredName string) (bool, recognizedFaceMatch, error) {
@@ -344,16 +461,19 @@ func clampApproachDistance(distanceMM int) int {
 	return distanceMM
 }
 
-func waitForConfirmation(ctx context.Context, robot *vector.Vector, bcClient vectorpb.ExternalInterface_BehaviorControlClient, esn string) bool {
-	releaseReq := &vectorpb.BehaviorControlRequest{
-		RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
-			ControlRelease: &vectorpb.ControlRelease{},
-		},
+func waitForConfirmation(ctx context.Context, robot *vector.Vector, esn string) (confirmationResult, error) {
+	confirmationCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Give VIC time to process the control release before simulating the
+	// button press that enables normal voice-intent handling.
+	releaseDelay := time.NewTimer(500 * time.Millisecond)
+	defer releaseDelay.Stop()
+	select {
+	case <-confirmationCtx.Done():
+		return confirmationTimedOut, nil
+	case <-releaseDelay.C:
 	}
-	if err := bcClient.Send(releaseReq); err != nil {
-		logger.Println("Productivity: Failed to release BC for confirmation: " + err.Error())
-	}
-	time.Sleep(500 * time.Millisecond)
 
 	var ip string
 	for _, bot := range vars.BotInfo.Robots {
@@ -367,101 +487,54 @@ func waitForConfirmation(ctx context.Context, robot *vector.Vector, bcClient vec
 		go func() {
 			url := fmt.Sprintf("http://%s:8889/consolevarset?key=FakeButtonPressType&value=singlePressDetected", ip)
 			client := &http.Client{Timeout: 2 * time.Second}
-			client.Get(url)
+			resp, err := client.Get(url)
+			if err == nil {
+				resp.Body.Close()
+			}
 		}()
 	}
 
-	eventStream, _ := robot.Conn.EventStream(ctx, &vectorpb.EventRequest{})
-	timeout := time.After(30 * time.Second)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	startLogLen := len(logger.LogList)
+	eventStream, err := robot.Conn.EventStream(confirmationCtx, &vectorpb.EventRequest{})
+	if err != nil {
+		return confirmationTimedOut, err
+	}
 
 	for {
-		select {
-		case <-ticker.C:
-			if eventStream != nil {
-				msg, err := eventStream.Recv()
-				if err == nil && msg != nil && msg.Event != nil {
-					intent := msg.Event.GetUserIntent()
-					if intent != nil {
-						b, _ := protojson.Marshal(intent)
-						s := string(b)
-						if strings.Contains(s, "intent_imperative_affirmative") || strings.Contains(s, "intent_global_yes") {
-							bcClient.Send(&vectorpb.BehaviorControlRequest{
-								RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-									ControlRequest: &vectorpb.ControlRequest{
-										Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-									},
-								},
-							})
-							robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "Great!", UseVectorVoice: true})
-							return true
-						}
-						if strings.Contains(s, "intent_imperative_negative") {
-							bcClient.Send(&vectorpb.BehaviorControlRequest{
-								RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-									ControlRequest: &vectorpb.ControlRequest{
-										Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-									},
-								},
-							})
-							robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "Ok, I'll remind you again soon.", UseVectorVoice: true})
-							return false
-						}
-					}
-				}
+		msg, err := eventStream.Recv()
+		if err != nil {
+			if confirmationCtx.Err() != nil {
+				return confirmationTimedOut, nil
 			}
-
-			currentLog := logger.LogList
-			if len(currentLog) > startLogLen {
-				newLogs := currentLog[startLogLen:]
-				if strings.Contains(newLogs, "intent_imperative_affirmative") || strings.Contains(newLogs, "intent_global_yes") {
-					bcClient.Send(&vectorpb.BehaviorControlRequest{
-						RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-							ControlRequest: &vectorpb.ControlRequest{
-								Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-							},
-						},
-					})
-					robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "Great!", UseVectorVoice: true})
-					return true
-				}
-				if strings.Contains(newLogs, "intent_imperative_negative") {
-					bcClient.Send(&vectorpb.BehaviorControlRequest{
-						RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-							ControlRequest: &vectorpb.ControlRequest{
-								Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-							},
-						},
-					})
-					robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "Ok, I'll remind you again soon.", UseVectorVoice: true})
-					return false
-				}
-				if strings.Contains(newLogs, "intent_system_noaudio") {
-					bcClient.Send(&vectorpb.BehaviorControlRequest{
-						RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-							ControlRequest: &vectorpb.ControlRequest{
-								Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-							},
-						},
-					})
-					robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "I didn't hear anything. I'll remind you later.", UseVectorVoice: true})
-					return false
-				}
-			}
-		case <-timeout:
-			bcClient.Send(&vectorpb.BehaviorControlRequest{
-				RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
-					ControlRequest: &vectorpb.ControlRequest{
-						Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
-					},
-				},
-			})
-			robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: "I didn't hear anything. I'll remind you later.", UseVectorVoice: true})
-			return false
+			return confirmationTimedOut, err
+		}
+		if msg == nil || msg.Event == nil {
+			continue
+		}
+		intent := msg.Event.GetUserIntent()
+		if intent == nil {
+			continue
+		}
+		b, err := protojson.Marshal(intent)
+		if err != nil {
+			continue
+		}
+		switch classifyConfirmationIntent(string(b)) {
+		case confirmationAccepted:
+			return confirmationAccepted, nil
+		case confirmationDeclined:
+			return confirmationDeclined, nil
 		}
 	}
+}
+
+func classifyConfirmationIntent(intent string) confirmationResult {
+	if strings.Contains(intent, "intent_imperative_affirmative") || strings.Contains(intent, "intent_global_yes") {
+		return confirmationAccepted
+	}
+	if strings.Contains(intent, "intent_imperative_negative") {
+		return confirmationDeclined
+	}
+	return confirmationTimedOut
 }
 
 func IntentPass(req interface{}, intentThing string, speechText string, intentParams map[string]string, isParam bool) (interface{}, error) {
