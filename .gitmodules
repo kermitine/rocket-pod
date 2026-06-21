@@ -1,0 +1,3 @@
+[submodule "vector-go-sdk"]
+	path = vector-go-sdk
+	url = https://github.com/kermitine/vector-go-sdk.git
