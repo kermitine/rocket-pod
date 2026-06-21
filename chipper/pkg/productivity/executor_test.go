@@ -3,6 +3,11 @@ package productivity
 import (
 	"context"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -152,5 +157,36 @@ func TestWaitForReminderImageHonorsCancellation(t *testing.T) {
 
 	if waitForReminderImage(ctx) {
 		t.Fatal("waitForReminderImage() = true for canceled context")
+	}
+}
+
+func TestConvertImageToVectorFaceUsesVector2Dimensions(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+
+	path := filepath.Join(t.TempDir(), "red.png")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := png.Encode(file, img); err != nil {
+		file.Close()
+		t.Fatalf("png.Encode() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	got, err := convertImageToVectorFace(path)
+	if err != nil {
+		t.Fatalf("convertImageToVectorFace() error = %v", err)
+	}
+
+	wantLen := reminderFaceImageWidth * reminderFaceImageHeight * 2
+	if len(got) != wantLen {
+		t.Fatalf("convertImageToVectorFace() returned %d bytes, want %d", len(got), wantLen)
+	}
+	if got[0] != 0xF8 || got[1] != 0x00 {
+		t.Fatalf("first RGB565 pixel = %02x%02x, want f800", got[0], got[1])
 	}
 }

@@ -25,8 +25,13 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-const faceImagePixelsPerChunk = 600
-const endOfAnimationList = "EndOfListAnimationsResponses"
+const (
+	faceImagePixelsPerChunk = 600
+	faceImageBytesPerPixel  = 2
+	vector1FaceImagePixels  = 184 * 96
+	vector2FaceImagePixels  = 160 * 80
+	endOfAnimationList      = "EndOfListAnimationsResponses"
+)
 
 var (
 	connectionIdLock    sync.Mutex
@@ -825,14 +830,30 @@ func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int,
 	return nil
 }
 
-func (service *rpcService) DisplayFaceImageRGB(ctx context.Context, in *extint.DisplayFaceImageRGBRequest) (*extint.DisplayFaceImageRGBResponse, error) {
-	const totalPixels = 17664
-	const bytesPerPixel = 2
-	const expectedBytes = totalPixels * bytesPerPixel
-	if in == nil || len(in.FaceData) != expectedBytes {
-		return nil, grpc.Errorf(codes.InvalidArgument, "face_data must contain exactly %d bytes, got %d", expectedBytes, len(in.GetFaceData()))
+func faceImagePixelCount(faceData []byte) (int, bool) {
+	switch len(faceData) {
+	case vector1FaceImagePixels * faceImageBytesPerPixel:
+		return vector1FaceImagePixels, true
+	case vector2FaceImagePixels * faceImageBytesPerPixel:
+		return vector2FaceImagePixels, true
+	default:
+		return 0, false
 	}
-	chunkCount := (totalPixels + faceImagePixelsPerChunk - 1) / faceImagePixelsPerChunk
+}
+
+func faceImageChunkCount(totalPixels int) int {
+	return (totalPixels + faceImagePixelsPerChunk - 1) / faceImagePixelsPerChunk
+}
+
+func (service *rpcService) DisplayFaceImageRGB(ctx context.Context, in *extint.DisplayFaceImageRGBRequest) (*extint.DisplayFaceImageRGBResponse, error) {
+	if in == nil {
+		return nil, grpc.Errorf(codes.InvalidArgument, "face_data is required")
+	}
+	totalPixels, ok := faceImagePixelCount(in.FaceData)
+	if !ok {
+		return nil, grpc.Errorf(codes.InvalidArgument, "face_data must contain exactly %d or %d bytes, got %d", vector1FaceImagePixels*faceImageBytesPerPixel, vector2FaceImagePixels*faceImageBytesPerPixel, len(in.FaceData))
+	}
+	chunkCount := faceImageChunkCount(totalPixels)
 
 	if err := SendFaceDataAsChunks(in, chunkCount, faceImagePixelsPerChunk, totalPixels); err != nil {
 		return nil, err
