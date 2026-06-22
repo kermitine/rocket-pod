@@ -800,10 +800,11 @@ func (service *rpcService) CancelActionByIdTag(ctx context.Context, in *extint.C
 }
 
 func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int, pixelsPerChunk int, totalPixels int) error {
-	var convertedUint16Data [faceImagePixelsPerChunk]uint16
-
 	// cycle until we run out of bytes to transfer
 	for i := 0; i < chunkCount; i++ {
+		// Start every chunk with black padding so unused pixels in the final
+		// fixed-size CLAD array can never retain data from the previous chunk.
+		var convertedUint16Data [faceImagePixelsPerChunk]uint16
 		pixelCount := faceImagePixelsPerChunk
 		if i == chunkCount-1 {
 			pixelCount = totalPixels - faceImagePixelsPerChunk*i
@@ -831,7 +832,7 @@ func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int,
 }
 
 func facePixelFromBytes(pixel []byte) uint16 {
-	return binary.LittleEndian.Uint16(pixel)
+	return binary.BigEndian.Uint16(pixel)
 }
 
 func faceImagePixelCount(faceData []byte) (int, bool) {

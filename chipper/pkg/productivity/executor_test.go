@@ -194,9 +194,10 @@ func TestConvertImageToVectorFaceDataPacking(t *testing.T) {
 		wantPixel [2]byte
 	}{
 		{name: "red", color: color.RGBA{R: 255, A: 255}, wantPixel: [2]byte{0xF8, 0x00}},
-		{name: "green", color: color.RGBA{G: 255, A: 255}, wantPixel: [2]byte{0x07, 0x00}},
+		{name: "green", color: color.RGBA{G: 255, A: 255}, wantPixel: [2]byte{0x07, 0xE0}},
 		{name: "blue", color: color.RGBA{B: 255, A: 255}, wantPixel: [2]byte{0x00, 0x1F}},
-		{name: "white", color: color.White, wantPixel: [2]byte{0xFF, 0x1F}},
+		{name: "white", color: color.White, wantPixel: [2]byte{0xFF, 0xFF}},
+		{name: "transparent", color: color.NRGBA{R: 255, G: 255, B: 255, A: 0}, wantPixel: [2]byte{0x00, 0x00}},
 	}
 
 	for _, tt := range tests {

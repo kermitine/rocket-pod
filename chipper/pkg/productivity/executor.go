@@ -3,6 +3,7 @@ package productivity
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -967,8 +968,8 @@ func convertImageToVectorFace(path string) ([]byte, error) {
 	return convertImageToVectorFaceData(img), nil
 }
 
-// Vector's face display uses a packed 13-bit color value laid out as
-// 000bbbbbrrrrrggg. The SDK transports each uint16 in little-endian order.
+// Vector's face display uses standard RGB565, transported high byte first as
+// specified by Anki's official Vector SDK.
 func convertImageToVectorFaceData(img image.Image) []byte {
 	const width = 184
 	const height = 96
@@ -982,13 +983,9 @@ func convertImageToVectorFaceData(img image.Image) []byte {
 			srcY := y * srcH / height
 			c := img.At(bounds.Min.X+srcX, bounds.Min.Y+srcY)
 			r, g, b, _ := c.RGBA()
-			r8 := uint16(r >> 8)
-			g3 := uint16(g >> 13)
-			b8 := uint16(b >> 8)
-			faceColor := ((b8 & 0xF8) << 5) | (r8 & 0xF8) | (g3 & 0x07)
+			faceColor := (uint16(r>>11) << 11) | (uint16(g>>10) << 5) | uint16(b>>11)
 			idx := (y*width + x) * 2
-			buf[idx] = byte(faceColor & 0xFF)
-			buf[idx+1] = byte(faceColor >> 8)
+			binary.BigEndian.PutUint16(buf[idx:idx+2], faceColor)
 		}
 	}
 	return buf

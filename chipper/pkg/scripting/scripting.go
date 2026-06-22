@@ -140,7 +140,7 @@ func showImageOnScreen(L *lua.LState) int {
 	pixels := ConvertPixelsToRawBitmap(img, 100)
 	buf := new(bytes.Buffer)
 	for _, ui := range pixels {
-		binary.Write(buf, binary.LittleEndian, ui)
+		binary.Write(buf, binary.BigEndian, ui)
 	}
 	executeWithGoroutine(L, func(L *lua.LState) error {
 		_, err := gRfLS(L).Conn.DisplayFaceImageRGB(L.Context(),
