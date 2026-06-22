@@ -198,6 +198,34 @@ func TestReminderHeadAngleIsRaisedForScanningAndViewing(t *testing.T) {
 	}
 }
 
+func TestReminderDriveRequestIsShortAndBounded(t *testing.T) {
+	request := reminderDriveRequest()
+	if request.DistMm <= 0 || request.DistMm > 100 {
+		t.Fatalf("approach distance = %v, want 1..100 mm", request.DistMm)
+	}
+	if request.SpeedMmps <= 0 || request.SpeedMmps > 40 {
+		t.Fatalf("approach speed = %v, want 1..40 mm/s", request.SpeedMmps)
+	}
+	if request.IdTag != reminderApproachActionTag || request.NumRetries != 0 || request.ShouldPlayAnimation {
+		t.Fatalf("approach request is not safely bounded: %#v", request)
+	}
+}
+
+func TestReminderRobotStateCliffAndStoppedChecks(t *testing.T) {
+	stopped := &vectorpb.RobotState{}
+	if !reminderRobotStateStopped(stopped) {
+		t.Fatal("stationary robot state was not recognized as stopped")
+	}
+	moving := &vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_ARE_WHEELS_MOVING), LeftWheelSpeedMmps: 20, RightWheelSpeedMmps: 20}
+	if reminderRobotStateStopped(moving) {
+		t.Fatal("moving robot state was recognized as stopped")
+	}
+	cliff := &vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_CLIFF_DETECTED)}
+	if !reminderRobotStateHas(cliff, vectorpb.RobotStatus_ROBOT_STATUS_CLIFF_DETECTED) {
+		t.Fatal("cliff status was not recognized")
+	}
+}
+
 func TestConvertImageToVectorFaceDataPacking(t *testing.T) {
 	tests := []struct {
 		name      string

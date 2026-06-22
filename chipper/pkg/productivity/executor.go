@@ -84,6 +84,13 @@ const (
 	reminderFaceScanSpeed        = 1.0
 	reminderFaceScanPause        = 250 * time.Millisecond
 	reminderFaceScanMaxSteps     = 18
+	reminderApproachDistanceMM   = 100
+	reminderApproachSpeedMMPS    = 35
+	reminderApproachTimeout      = 6 * time.Second
+	reminderDriveStateWarmup     = 750 * time.Millisecond
+	reminderDriveStopTimeout     = 2 * time.Second
+	reminderDriveStopSettle      = 200 * time.Millisecond
+	reminderApproachActionTag    = 2400004
 	confirmationSpeechSettle     = 350 * time.Millisecond
 	confirmationSpeechRetryDelay = 500 * time.Millisecond
 )
@@ -253,7 +260,10 @@ func processTask(task Task) {
 		return
 	}
 
-	facePersonForReminder(ctx, robot)
+	if !facePersonForReminder(ctx, robot) {
+		logger.Println("Productivity: Reminder presentation canceled because wheel stop could not be confirmed")
+		return
+	}
 	if !taskIsCurrent(task) {
 		return
 	}
@@ -511,9 +521,9 @@ func (o *faceSearchObservations) face() (int32, bool) {
 }
 
 // Scan in small, completed turns until the event stream reports a tracked face,
-// then explicitly face it. Reminder face seeking is deliberately rotation-only:
-// Vector must never drive toward a person here.
-func facePersonForReminder(ctx context.Context, robot *vector.Vector) {
+// explicitly face it, and make one short, cliff-monitored approach. Presentation
+// is gated on positive confirmation that both wheels have stopped.
+func facePersonForReminder(ctx context.Context, robot *vector.Vector) bool {
 	positionReminderHeadForViewing(ctx, robot, "before face scan")
 	defer positionReminderHeadForViewing(ctx, robot, "before reminder display")
 
@@ -544,7 +554,7 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector) {
 	} else {
 		cancel()
 		logger.Println("Productivity: Could not observe faces; skipping face search: " + eventErr.Error())
-		return
+		return true
 	}
 
 	logger.Println("Productivity: Looking for a person before delivering reminder")
@@ -602,7 +612,7 @@ scanLoop:
 	faceID, faceObserved := observations.face()
 	if !faceObserved {
 		logger.Println("Productivity: No face observed before reminder; continuing")
-		return
+		return true
 	}
 
 	logger.Println("Productivity: Turning toward observed face for reminder")
@@ -616,13 +626,176 @@ scanLoop:
 	})
 	if err != nil {
 		logger.Println("Productivity: Could not turn toward face; continuing: " + err.Error())
-		return
+		return true
 	}
 	if turnResponse.GetResult() == nil || turnResponse.GetResult().GetCode() != vectorpb.ActionResult_ACTION_RESULT_SUCCESS {
 		logger.Println("Productivity: Face turn did not complete; continuing")
-		return
+		return true
 	}
 	logger.Println("Productivity: Facing person for reminder")
+	return driveStraightForReminder(ctx, robot)
+}
+
+type reminderDriveResult struct {
+	response *vectorpb.DriveStraightResponse
+	err      error
+}
+
+func driveStraightForReminder(ctx context.Context, robot *vector.Vector) bool {
+	motionCtx, cancel := context.WithTimeout(ctx, reminderApproachTimeout)
+	defer cancel()
+	eventStream, err := robot.Conn.EventStream(motionCtx, &vectorpb.EventRequest{})
+	if err != nil {
+		logger.Println("Productivity: Could not monitor cliff sensors; skipping reminder approach: " + err.Error())
+		return true
+	}
+	states := make(chan *vectorpb.RobotState, 4)
+	cliffSeen := make(chan struct{}, 1)
+	go func() {
+		for {
+			response, recvErr := eventStream.Recv()
+			if recvErr != nil {
+				return
+			}
+			if response == nil || response.GetEvent() == nil {
+				continue
+			}
+			state := response.GetEvent().GetRobotState()
+			if state == nil {
+				continue
+			}
+			select {
+			case states <- state:
+			default:
+			}
+			if reminderRobotStateHas(state, vectorpb.RobotStatus_ROBOT_STATUS_CLIFF_DETECTED) {
+				select {
+				case cliffSeen <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	warmup := time.NewTimer(reminderDriveStateWarmup)
+	defer warmup.Stop()
+	select {
+	case state := <-states:
+		if reminderRobotStateHas(state, vectorpb.RobotStatus_ROBOT_STATUS_CLIFF_DETECTED) {
+			logger.Println("Productivity: Cliff already detected; skipping reminder approach")
+			return true
+		}
+	case <-cliffSeen:
+		logger.Println("Productivity: Cliff already detected; skipping reminder approach")
+		return true
+	case <-warmup.C:
+		logger.Println("Productivity: No robot safety state received; skipping reminder approach")
+		return true
+	case <-motionCtx.Done():
+		return true
+	}
+
+	logger.Println("Productivity: Driving straight toward observed face before reminder")
+	driveDone := make(chan reminderDriveResult, 1)
+	go func() {
+		response, driveErr := robot.Conn.DriveStraight(motionCtx, reminderDriveRequest())
+		driveDone <- reminderDriveResult{response: response, err: driveErr}
+	}()
+
+	var result reminderDriveResult
+	select {
+	case result = <-driveDone:
+	case <-cliffSeen:
+		logger.Println("Productivity: Cliff detected during reminder approach; canceling drive")
+		cancelReminderDrive(robot)
+		select {
+		case result = <-driveDone:
+		case <-motionCtx.Done():
+			result.err = motionCtx.Err()
+		}
+	case <-motionCtx.Done():
+		logger.Println("Productivity: Reminder approach timed out; canceling drive")
+		cancelReminderDrive(robot)
+		result.err = motionCtx.Err()
+	}
+	if result.err != nil {
+		logger.Println("Productivity: Reminder approach ended without success: " + result.err.Error())
+	} else if result.response == nil || result.response.GetResult() == nil || result.response.GetResult().GetCode() != vectorpb.ActionResult_ACTION_RESULT_SUCCESS {
+		logger.Println("Productivity: Reminder approach was stopped by robot safety")
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(ctx, reminderDriveStopTimeout)
+	defer stopCancel()
+	if _, err := robot.Conn.StopAllMotors(stopCtx, &vectorpb.StopAllMotorsRequest{}); err != nil {
+		logger.Println("Productivity: Could not issue final motor stop: " + err.Error())
+	}
+	if !waitForReminderWheelsStopped(stopCtx, robot) {
+		logger.Println("Productivity: Wheels did not report stopped after reminder approach")
+		return false
+	}
+	logger.Println("Productivity: Reminder approach stopped; presentation may begin")
+	return true
+}
+
+func reminderDriveRequest() *vectorpb.DriveStraightRequest {
+	return &vectorpb.DriveStraightRequest{
+		SpeedMmps:           reminderApproachSpeedMMPS,
+		DistMm:              reminderApproachDistanceMM,
+		ShouldPlayAnimation: false,
+		IdTag:               reminderApproachActionTag,
+		NumRetries:          0,
+	}
+}
+
+func reminderRobotStateHas(state *vectorpb.RobotState, flag vectorpb.RobotStatus) bool {
+	return state != nil && state.GetStatus()&uint32(flag) != 0
+}
+
+func reminderRobotStateStopped(state *vectorpb.RobotState) bool {
+	if state == nil {
+		return false
+	}
+	if reminderRobotStateHas(state, vectorpb.RobotStatus_ROBOT_STATUS_IS_MOVING) || reminderRobotStateHas(state, vectorpb.RobotStatus_ROBOT_STATUS_ARE_WHEELS_MOVING) {
+		return false
+	}
+	return math.Abs(float64(state.GetLeftWheelSpeedMmps())) < 1 && math.Abs(float64(state.GetRightWheelSpeedMmps())) < 1
+}
+
+func cancelReminderDrive(robot *vector.Vector) {
+	cancelCtx, cancel := context.WithTimeout(context.Background(), reminderDriveStopTimeout)
+	defer cancel()
+	if _, err := robot.Conn.CancelActionByIdTag(cancelCtx, &vectorpb.CancelActionByIdTagRequest{IdTag: reminderApproachActionTag}); err != nil {
+		logger.Println("Productivity: Could not cancel reminder drive action: " + err.Error())
+	}
+	if _, err := robot.Conn.StopAllMotors(cancelCtx, &vectorpb.StopAllMotorsRequest{}); err != nil {
+		logger.Println("Productivity: Could not stop reminder drive motors: " + err.Error())
+	}
+}
+
+func waitForReminderWheelsStopped(ctx context.Context, robot *vector.Vector) bool {
+	settle := time.NewTimer(reminderDriveStopSettle)
+	select {
+	case <-ctx.Done():
+		settle.Stop()
+		return false
+	case <-settle.C:
+	}
+	stream, err := robot.Conn.EventStream(ctx, &vectorpb.EventRequest{})
+	if err != nil {
+		return false
+	}
+	for {
+		response, recvErr := stream.Recv()
+		if recvErr != nil {
+			return false
+		}
+		if response == nil || response.GetEvent() == nil {
+			continue
+		}
+		if reminderRobotStateStopped(response.GetEvent().GetRobotState()) {
+			return true
+		}
+	}
 }
 
 func positionReminderHeadForViewing(ctx context.Context, robot *vector.Vector, reason string) {
