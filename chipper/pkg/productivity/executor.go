@@ -375,6 +375,12 @@ func (o *faceSearchObservations) closestFace() (*vectorpb.PoseStruct, *vectorpb.
 	return o.robotPose, closest
 }
 
+func (o *faceSearchObservations) sawFace() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.faces) > 0
+}
+
 // FindFaces runs Vector's native face-search behavior. While it runs, collect
 // mapped face positions so the navigation stack can safely approach the nearest
 // visible person. Every step is best-effort so a failed search or route never
@@ -382,11 +388,10 @@ func (o *faceSearchObservations) closestFace() (*vectorpb.PoseStruct, *vectorpb.
 func approachPersonForReminder(ctx context.Context, robot *vector.Vector) {
 	searchCtx, cancel := context.WithTimeout(ctx, reminderFaceSearchTimeout)
 	observations := &faceSearchObservations{}
-	eventStream, eventErr := robot.Conn.EventStream(searchCtx, &vectorpb.EventRequest{
-		ListType: &vectorpb.EventRequest_WhiteList{
-			WhiteList: &vectorpb.FilterList{List: []string{"robot_state", "robot_observed_face"}},
-		},
-	})
+	if _, err := robot.Conn.EnableFaceDetection(searchCtx, &vectorpb.EnableFaceDetectionRequest{Enable: true}); err != nil {
+		logger.Println("Productivity: Could not explicitly enable face detection: " + err.Error())
+	}
+	eventStream, eventErr := robot.Conn.EventStream(searchCtx, &vectorpb.EventRequest{})
 	if eventErr == nil {
 		go func() {
 			for {
@@ -403,36 +408,40 @@ func approachPersonForReminder(ctx context.Context, robot *vector.Vector) {
 
 	logger.Println("Productivity: Looking for a person before delivering reminder")
 	response, err := robot.Conn.FindFaces(searchCtx, &vectorpb.FindFacesRequest{})
-	if err != nil {
-		searchTimedOut := searchCtx.Err() != nil
-		cancel()
-		if searchTimedOut {
-			logger.Println("Productivity: No face found before reminder; continuing")
-		} else {
-			logger.Println("Productivity: Face search failed; continuing: " + err.Error())
-		}
-		return
-	}
-	if response.GetResult() != vectorpb.BehaviorResults_BEHAVIOR_COMPLETE_STATE {
-		cancel()
-		logger.Println("Productivity: Face search did not find an available person; continuing")
-		return
-	}
-	logger.Println("Productivity: Facing person for reminder")
+	searchTimedOut := searchCtx.Err() != nil
+	searchCompleted := err == nil && response.GetResult() == vectorpb.BehaviorResults_BEHAVIOR_COMPLETE_STATE
 
 	// The face event usually arrives just before FindFaces completes. Give the
 	// event stream a brief chance to deliver it before taking the snapshot.
-	settleTimer := time.NewTimer(300 * time.Millisecond)
-	select {
-	case <-ctx.Done():
-		settleTimer.Stop()
-		cancel()
-		return
-	case <-settleTimer.C:
+	if !searchTimedOut {
+		settleTimer := time.NewTimer(300 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			settleTimer.Stop()
+			cancel()
+			return
+		case <-settleTimer.C:
+		}
 	}
 	cancel()
 
 	robotPose, facePose := observations.closestFace()
+	if facePose == nil {
+		if observations.sawFace() {
+			logger.Println("Productivity: Saw a person but could not map a safe approach position; continuing")
+		} else if searchCompleted {
+			logger.Println("Productivity: Facing person, but no mapped face position was reported; continuing")
+		} else if searchTimedOut {
+			logger.Println("Productivity: No face observed before reminder; continuing")
+		} else if err != nil {
+			logger.Println("Productivity: Face search failed; continuing: " + err.Error())
+		} else {
+			logger.Println("Productivity: Face search did not find an available person; continuing")
+		}
+		return
+	}
+	logger.Println("Productivity: Face observed and mapped for reminder")
+
 	targetX, targetY, targetHeading, shouldMove := personApproachTarget(robotPose, facePose)
 	if !shouldMove {
 		logger.Println("Productivity: Person is already close or has no safe mapped position; continuing")
