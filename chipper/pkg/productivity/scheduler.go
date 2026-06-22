@@ -72,8 +72,10 @@ func StopScheduler() {
 func schedulerLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	externalApiTicker := time.NewTicker(5 * time.Minute)
+	nbaTicker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	defer externalApiTicker.Stop()
+	defer nbaTicker.Stop()
 
 	for {
 		select {
@@ -83,12 +85,18 @@ func schedulerLoop() {
 			nextRandomRun = make(map[string]time.Time)
 			lastProcessedTasks = make(map[string]bool)
 			lastManualRun = make(map[string]string)
+			resetNBANotificationState()
 			logger.Println("Productivity: Applied updated scheduler configuration")
+			if vars.APIConfig.Productivity.NBA.Enable {
+				checkNBAGames()
+			}
 		case <-externalApiTicker.C:
 			provider := vars.APIConfig.Productivity.Provider
 			if provider == "todoist" {
 				checkTodoistTasks()
 			}
+		case <-nbaTicker.C:
+			checkNBAGames()
 		case <-ticker.C:
 			generation := currentConfigurationGeneration()
 			configStr := vars.APIConfig.Productivity.ManualConfig

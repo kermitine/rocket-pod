@@ -36,6 +36,7 @@ type Task struct {
 	RobotESN                string
 	Phrases                 []string
 	Image                   string
+	FaceData                []byte
 	Source                  string
 	RetryCount              int
 	RequireConfirmation     bool
@@ -244,7 +245,17 @@ func processTask(task Task) {
 		return
 	}
 
-	if task.Image != "" {
+	if len(task.FaceData) > 0 {
+		if _, err := robot.Conn.DisplayFaceImageRGB(ctx, &vectorpb.DisplayFaceImageRGBRequest{
+			FaceData:         task.FaceData,
+			DurationMs:       uint32(reminderImageDisplayDuration / time.Millisecond),
+			InterruptRunning: true,
+		}); err != nil {
+			logger.Println("Productivity: Dynamic face image display failed: " + err.Error())
+		} else if !waitForReminderImage(ctx) {
+			return
+		}
+	} else if task.Image != "" {
 		fullPath := filepath.Join(ProductivityImgPath, task.Image)
 		if _, err := os.Stat(fullPath); err == nil {
 			imgData, err := convertImageToVectorFace(fullPath)
@@ -849,6 +860,10 @@ func convertImageToVectorFace(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return convertImageToVectorRGB565(img), nil
+}
+
+func convertImageToVectorRGB565(img image.Image) []byte {
 	const width = 184
 	const height = 96
 	buf := make([]byte, width*height*2)
@@ -870,5 +885,5 @@ func convertImageToVectorFace(path string) ([]byte, error) {
 			buf[idx+1] = byte(rgb565 & 0xFF)
 		}
 	}
-	return buf, nil
+	return buf
 }

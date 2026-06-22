@@ -5,6 +5,19 @@ const intentsJson = JSON.parse(
 var GetLog = false;
 let reminderCounter = 0; 
 
+const nbaTeams = [
+  ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
+  ["CHA", "Charlotte Hornets"], ["CHI", "Chicago Bulls"], ["CLE", "Cleveland Cavaliers"],
+  ["DAL", "Dallas Mavericks"], ["DEN", "Denver Nuggets"], ["DET", "Detroit Pistons"],
+  ["GS", "Golden State Warriors"], ["HOU", "Houston Rockets"], ["IND", "Indiana Pacers"],
+  ["LAC", "LA Clippers"], ["LAL", "Los Angeles Lakers"], ["MEM", "Memphis Grizzlies"],
+  ["MIA", "Miami Heat"], ["MIL", "Milwaukee Bucks"], ["MIN", "Minnesota Timberwolves"],
+  ["NO", "New Orleans Pelicans"], ["NY", "New York Knicks"], ["OKC", "Oklahoma City Thunder"],
+  ["ORL", "Orlando Magic"], ["PHI", "Philadelphia 76ers"], ["PHX", "Phoenix Suns"],
+  ["POR", "Portland Trail Blazers"], ["SA", "San Antonio Spurs"], ["SAC", "Sacramento Kings"],
+  ["TOR", "Toronto Raptors"], ["UTAH", "Utah Jazz"], ["WSH", "Washington Wizards"]
+];
+
 const getE = (element) => document.getElementById(element);
 
 function updateIntentSelection(element) {
@@ -284,6 +297,52 @@ function toggleManualReminders() {
    const enabled = getE("enableManualReminders").checked;
    getE("manualRemindersWrapper").style.display = enabled ? "block" : "none";
    getE("manualAddBtn").style.display = enabled ? "block" : "none";
+}
+
+function populateNBATeamSelect(selectedTeams = []) {
+  const select = getE("nbaFavoriteTeams");
+  if (!select) return;
+  const selected = new Set(selectedTeams || []);
+  select.innerHTML = "";
+  nbaTeams.forEach(([abbr, name]) => {
+    const option = document.createElement("option");
+    option.value = abbr;
+    option.textContent = `${name} (${abbr})`;
+    option.selected = selected.has(abbr);
+    select.appendChild(option);
+  });
+}
+
+function toggleNBASettings() {
+  getE("nbaSettings").style.display = getE("nbaEnable").checked ? "block" : "none";
+}
+
+function collectNBAConfigData() {
+  return {
+    enable: getE("nbaEnable").checked,
+    favorite_teams: Array.from(getE("nbaFavoriteTeams").selectedOptions).map(option => option.value),
+    pregame_minutes: parseInt(getE("nbaPregameMinutes").value) || 15,
+    live_update_minutes: parseInt(getE("nbaLiveUpdateMinutes").value) || 5,
+    notify_final: getE("nbaNotifyFinal").checked
+  };
+}
+
+function testNBAReminder() {
+  const formData = new FormData();
+  formData.append("target_robot", getE("targetBot").value);
+  displayMessage("addProductivityProviderAPIStatus", "Generating random NBA update...");
+
+  fetch("/api/test_nba_reminder", {
+    method: "POST",
+    body: formData
+  })
+    .then(async response => {
+      const text = await response.text();
+      if (!response.ok) throw new Error(text);
+      return text;
+    })
+    .then(text => displayMessage("addProductivityProviderAPIStatus", text))
+    .catch(error => displayMessage("addProductivityProviderAPIStatus", "NBA test failed: " + error.message));
 }
 
 function toggleAccordion(id) {
@@ -619,6 +678,7 @@ function sendProductivityAPIKey() {
   
   const manualConfigArray = collectManualConfigData(formData);
   formData.append("manual_config", JSON.stringify(manualConfigArray));
+  formData.append("nba_config", JSON.stringify(collectNBAConfigData()));
 
   displayMessage("addProductivityProviderAPIStatus", "Saving...");
 
@@ -636,6 +696,7 @@ function sendProductivityAPIKey() {
 }
 
 function updateProductivityAPI() {
+  populateNBATeamSelect();
   populateRobotList().then(() => {
       fetch("/api/get_productivity_api")
         .then((response) => response.json())
@@ -647,6 +708,14 @@ function updateProductivityAPI() {
               if (data.target_robot) {
                   getE("targetBot").value = data.target_robot;
               }
+
+              const nba = data.nba || {};
+              getE("nbaEnable").checked = nba.enable === true;
+              getE("nbaPregameMinutes").value = nba.pregame_minutes || 15;
+              getE("nbaLiveUpdateMinutes").value = nba.live_update_minutes || 5;
+              getE("nbaNotifyFinal").checked = nba.notify_final !== false;
+              populateNBATeamSelect(nba.favorite_teams || []);
+              toggleNBASettings();
 
               if (data.manual_config && data.manual_config.length > 2) { 
                   getE("enableManualReminders").checked = true;

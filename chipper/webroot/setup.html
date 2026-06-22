@@ -248,6 +248,47 @@
               </div>
            </div>
         </div>
+
+		<hr class="small-hr" style="width: 100px; border-color: #333;">
+
+		<div id="nbaReminderSection" style="text-align: left; margin-top: 20px;">
+		  <div class="manual-header">
+		    <div>
+		      <input type="checkbox" id="nbaEnable" onchange="toggleNBASettings()">
+		      <label class="checkbox-label" for="nbaEnable">Enable NBA Game Updates</label>
+		    </div>
+		  </div>
+		  <div id="nbaSettings" class="reminder-block" style="display:none; padding:20px; margin-top:12px;">
+		    <div class="reminder-grid">
+		      <label for="nbaFavoriteTeams">Favorite Teams</label>
+		      <div>
+		        <select id="nbaFavoriteTeams" multiple size="10" class="tinput" style="width:100%; min-height:220px;"></select>
+		        <small class="desc">Hold Ctrl/Command to select multiple teams.</small>
+		      </div>
+
+		      <label for="nbaPregameMinutes">Pregame Reminder</label>
+		      <div style="display:flex; align-items:center; gap:8px;">
+		        <input id="nbaPregameMinutes" type="number" min="1" max="180" value="15" class="tinput" style="width:90px;">
+		        <span>minutes before tipoff</span>
+		      </div>
+
+		      <label for="nbaLiveUpdateMinutes">Live Score Updates</label>
+		      <div style="display:flex; align-items:center; gap:8px;">
+		        <input id="nbaLiveUpdateMinutes" type="number" min="1" max="60" value="5" class="tinput" style="width:90px;">
+		        <span>minutes between updates</span>
+		      </div>
+
+		      <label for="nbaNotifyFinal">Final Score</label>
+		      <div>
+		        <input type="checkbox" id="nbaNotifyFinal" checked>
+		        <label class="checkbox-label" for="nbaNotifyFinal">Announce the final score</label>
+		      </div>
+		    </div>
+		    <div style="margin-top:20px; padding-top:15px; border-top:1px solid #444; display:flex; justify-content:flex-end;">
+		      <button type="button" class="btn-generic btn-test" onclick="testNBAReminder()">Test Random NBA Update</button>
+		    </div>
+		  </div>
+		</div>
         <hr />
       </div>
 

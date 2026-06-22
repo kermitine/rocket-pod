@@ -79,6 +79,8 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		handleGetProductivityAPI(w)
 	case "test_productivity_reminder":
 		handleTestProductivityReminder(w, r)
+	case "test_nba_reminder":
+		handleTestNBAReminder(w, r)
 	case "is_api_v3":
 		fmt.Fprintf(w, "it is!")
 	default:
@@ -231,6 +233,7 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	targetRobot := r.FormValue("target_robot")
 	timezone := strings.TrimSpace(r.FormValue("timezone"))
+	nbaConfigStr := strings.TrimSpace(r.FormValue("nba_config"))
 	manualConfig := strings.TrimSpace(r.FormValue("manual_config"))
 	if manualConfig == "" {
 		manualConfig = "[]"
@@ -250,6 +253,27 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	manualConfig = string(canonicalConfig)
 
+	var nbaConfig vars.NBAConfig
+	if nbaConfigStr != "" {
+		if err := json.Unmarshal([]byte(nbaConfigStr), &nbaConfig); err != nil {
+			http.Error(w, "Invalid NBA reminder configuration", http.StatusBadRequest)
+			return
+		}
+	}
+	nbaConfig.FavoriteTeams = productivity.NormalizeNBATeams(nbaConfig.FavoriteTeams)
+	if nbaConfig.PregameMinutes < 1 {
+		nbaConfig.PregameMinutes = 15
+	}
+	if nbaConfig.PregameMinutes > 180 {
+		nbaConfig.PregameMinutes = 180
+	}
+	if nbaConfig.LiveUpdateMinutes < 1 {
+		nbaConfig.LiveUpdateMinutes = 5
+	}
+	if nbaConfig.LiveUpdateMinutes > 60 {
+		nbaConfig.LiveUpdateMinutes = 60
+	}
+
 	previousConfig := vars.APIConfig.Productivity
 	vars.APIConfig.Productivity.Enable = provider == "todoist"
 	vars.APIConfig.Productivity.Provider = provider
@@ -260,6 +284,7 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	vars.APIConfig.Productivity.TargetRobot = strings.TrimSpace(targetRobot)
 	vars.APIConfig.Productivity.Timezone = timezone
 	vars.APIConfig.Productivity.ManualConfig = manualConfig
+	vars.APIConfig.Productivity.NBA = nbaConfig
 
 	files := r.MultipartForm.File["files"]
 	if len(files) > 0 {
@@ -369,6 +394,16 @@ func handleTestProductivityReminder(w http.ResponseWriter, r *http.Request) {
 
 	productivity.InjectTestTask(task)
 	fmt.Fprint(w, "Test reminder queued.")
+}
+
+func handleTestNBAReminder(w http.ResponseWriter, r *http.Request) {
+	targetRobot := strings.TrimSpace(r.FormValue("target_robot"))
+	if err := productivity.InjectTestNBAUpdate(targetRobot); err != nil {
+		logger.Println("Unable to queue NBA test update: " + err.Error())
+		http.Error(w, "Unable to queue NBA test update: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	fmt.Fprint(w, "Random NBA score update queued.")
 }
 
 func handleSetKGAPI(w http.ResponseWriter, r *http.Request) {

@@ -144,15 +144,24 @@ type botjdoc struct {
 }
 
 type ProductivityConfig struct {
-	Enable       bool   `json:"enable"`
-	Provider     string `json:"provider"`
-	Key          string `json:"key"`
-	Url          string `json:"url"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	TargetRobot  string `json:"target_robot"`
-	Timezone     string `json:"timezone"`
-	ManualConfig string `json:"manual_config"`
+	Enable       bool      `json:"enable"`
+	Provider     string    `json:"provider"`
+	Key          string    `json:"key"`
+	Url          string    `json:"url"`
+	Username     string    `json:"username"`
+	Password     string    `json:"password"`
+	TargetRobot  string    `json:"target_robot"`
+	Timezone     string    `json:"timezone"`
+	ManualConfig string    `json:"manual_config"`
+	NBA          NBAConfig `json:"nba"`
+}
+
+type NBAConfig struct {
+	Enable            bool     `json:"enable"`
+	FavoriteTeams     []string `json:"favorite_teams"`
+	PregameMinutes    int      `json:"pregame_minutes"`
+	LiveUpdateMinutes int      `json:"live_update_minutes"`
+	NotifyFinal       bool     `json:"notify_final"`
 }
 
 func join(p1, p2 string) string {
