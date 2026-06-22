@@ -197,6 +197,20 @@ h1::after {
   background: linear-gradient(90deg, var(--fg-color), #ff7a45, #f5f1ec);
 }
 
+.rocket-pod-version {
+  width: fit-content;
+  margin: 0 auto 18px;
+  padding: 5px 12px;
+  border: 1px solid var(--line-color);
+  border-radius: 999px;
+  background: rgba(255, 59, 48, 0.09);
+  color: var(--muted-color);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 h2,
 h3 {
   margin: 0 0 10px;

@@ -815,7 +815,7 @@ func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int,
 
 		for j := 0; j < pixelCount; j++ {
 			uintAsBytes := slicedBinaryData[j*2 : j*2+2]
-			convertedUint16Data[j] = binary.BigEndian.Uint16(uintAsBytes)
+			convertedUint16Data[j] = facePixelFromBytes(uintAsBytes)
 		}
 
 		// Copy a subset of the pixels to the bytes?
@@ -828,6 +828,10 @@ func SendFaceDataAsChunks(in *extint.DisplayFaceImageRGBRequest, chunkCount int,
 	}
 
 	return nil
+}
+
+func facePixelFromBytes(pixel []byte) uint16 {
+	return binary.LittleEndian.Uint16(pixel)
 }
 
 func faceImagePixelCount(faceData []byte) (int, bool) {

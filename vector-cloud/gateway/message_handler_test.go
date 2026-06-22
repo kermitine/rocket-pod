@@ -2,6 +2,12 @@ package main
 
 import "testing"
 
+func TestFacePixelFromBytesUsesSDKByteOrder(t *testing.T) {
+	if got := facePixelFromBytes([]byte{0xF8, 0x00}); got != 0x00F8 {
+		t.Fatalf("facePixelFromBytes() = %#04x, want %#04x", got, 0x00F8)
+	}
+}
+
 func TestFaceImagePixelCount(t *testing.T) {
 	tests := []struct {
 		name       string

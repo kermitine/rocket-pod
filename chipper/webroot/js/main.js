@@ -5,6 +5,9 @@ const intentsJson = JSON.parse(
 var GetLog = false;
 let reminderCounter = 0; 
 
+// VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
+const ROCKET_POD_VERSION = "V1";
+
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
   ["CHA", "Charlotte Hornets"], ["CHI", "Chicago Bulls"], ["CLE", "Cleveland Cavaliers"],
@@ -19,6 +22,13 @@ const nbaTeams = [
 ];
 
 const getE = (element) => document.getElementById(element);
+
+function updateRocketPodVersion() {
+  const versionElement = getE("rocketPodVersion");
+  if (versionElement) {
+    versionElement.textContent = ROCKET_POD_VERSION;
+  }
+}
 
 function updateIntentSelection(element) {
   fetch("/api/get_custom_intents_json")

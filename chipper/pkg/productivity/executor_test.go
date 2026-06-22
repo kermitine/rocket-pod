@@ -3,6 +3,8 @@ package productivity
 import (
 	"context"
 	"errors"
+	"image"
+	"image/color"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -174,5 +176,29 @@ func TestFaceScanIsOneFullRotation(t *testing.T) {
 	totalAngle := reminderFaceScanStepAngle * reminderFaceScanMaxSteps
 	if math.Abs(totalAngle-2*math.Pi) > 0.000001 {
 		t.Fatalf("face scan angle = %v, want one full rotation", totalAngle)
+	}
+}
+
+func TestConvertImageToVectorFaceDataPacking(t *testing.T) {
+	tests := []struct {
+		name      string
+		color     color.Color
+		wantPixel [2]byte
+	}{
+		{name: "red", color: color.RGBA{R: 255, A: 255}, wantPixel: [2]byte{0xF8, 0x00}},
+		{name: "green", color: color.RGBA{G: 255, A: 255}, wantPixel: [2]byte{0x07, 0x00}},
+		{name: "blue", color: color.RGBA{B: 255, A: 255}, wantPixel: [2]byte{0x00, 0x1F}},
+		{name: "white", color: color.White, wantPixel: [2]byte{0xFF, 0x1F}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+			img.Set(0, 0, tt.color)
+			data := convertImageToVectorFaceData(img)
+			if data[0] != tt.wantPixel[0] || data[1] != tt.wantPixel[1] {
+				t.Fatalf("packed pixel = [%02x %02x], want [%02x %02x]", data[0], data[1], tt.wantPixel[0], tt.wantPixel[1])
+			}
+		})
 	}
 }

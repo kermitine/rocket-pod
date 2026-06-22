@@ -861,10 +861,12 @@ func convertImageToVectorFace(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return convertImageToVectorRGB565(img), nil
+	return convertImageToVectorFaceData(img), nil
 }
 
-func convertImageToVectorRGB565(img image.Image) []byte {
+// Vector's face display uses a packed 13-bit color value laid out as
+// 000bbbbbrrrrrggg. The SDK transports each uint16 in little-endian order.
+func convertImageToVectorFaceData(img image.Image) []byte {
 	const width = 184
 	const height = 96
 	buf := make([]byte, width*height*2)
@@ -877,13 +879,13 @@ func convertImageToVectorRGB565(img image.Image) []byte {
 			srcY := y * srcH / height
 			c := img.At(bounds.Min.X+srcX, bounds.Min.Y+srcY)
 			r, g, b, _ := c.RGBA()
-			r5 := uint16((r >> 11) & 0x1F)
-			g6 := uint16((g >> 10) & 0x3F)
-			b5 := uint16((b >> 11) & 0x1F)
-			rgb565 := (r5 << 11) | (g6 << 5) | b5
+			r8 := uint16(r >> 8)
+			g3 := uint16(g >> 13)
+			b8 := uint16(b >> 8)
+			faceColor := ((b8 & 0xF8) << 5) | (r8 & 0xF8) | (g3 & 0x07)
 			idx := (y*width + x) * 2
-			buf[idx] = byte(rgb565 >> 8)
-			buf[idx+1] = byte(rgb565 & 0xFF)
+			buf[idx] = byte(faceColor & 0xFF)
+			buf[idx+1] = byte(faceColor >> 8)
 		}
 	}
 	return buf

@@ -409,7 +409,7 @@ func renderNBAScoreFace(ctx context.Context, game nbaEvent, location *time.Locat
 	drawCenteredText(canvas, "-", 92, 50, color.RGBA{180, 180, 180, 255})
 	drawCenteredText(canvas, scoreOrZero(home.Score), 112, 50, color.White)
 	drawCenteredText(canvas, nbaFaceStatus(game, location), 92, 88, color.RGBA{100, 220, 255, 255})
-	return convertImageToVectorRGB565(canvas), nil
+	return convertImageToVectorFaceData(canvas), nil
 }
 
 func loadNBALogo(ctx context.Context, url string) (image.Image, error) {
