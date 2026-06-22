@@ -65,6 +65,9 @@ const (
 	reminderFaceSearchTimeout    = 12 * time.Second
 	reminderFaceTurnTimeout      = 6 * time.Second
 	reminderFaceTurnActionTag    = 2400001
+	reminderFaceScanActionTag    = 2400002
+	reminderFaceScanStepAngle    = math.Pi / 6
+	reminderFaceScanSpeed        = 0.75
 )
 
 var (
@@ -352,9 +355,9 @@ func (o *faceSearchObservations) face() (int32, bool) {
 	return o.faceID, o.found
 }
 
-// FindFaces runs Vector's native face-search behavior. If the event stream
-// reports a tracked face, explicitly turn toward it. Reminder face seeking is
-// deliberately rotation-only: Vector must never drive toward a person here.
+// Scan in small, completed turns until the event stream reports a tracked face,
+// then explicitly face it. Reminder face seeking is deliberately rotation-only:
+// Vector must never drive toward a person here.
 func facePersonForReminder(ctx context.Context, robot *vector.Vector) {
 	searchCtx, cancel := context.WithTimeout(ctx, reminderFaceSearchTimeout)
 	observations := &faceSearchObservations{}
@@ -362,6 +365,7 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector) {
 		logger.Println("Productivity: Could not explicitly enable face detection: " + err.Error())
 	}
 	eventStream, eventErr := robot.Conn.EventStream(searchCtx, &vectorpb.EventRequest{})
+	faceSeen := make(chan int32, 1)
 	if eventErr == nil {
 		go func() {
 			for {
@@ -369,43 +373,65 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector) {
 				if err != nil {
 					return
 				}
-				observations.observe(response.GetEvent())
+				event := response.GetEvent()
+				observations.observe(event)
+				if face := event.GetRobotObservedFace(); face != nil {
+					select {
+					case faceSeen <- face.GetFaceId():
+					default:
+					}
+				}
 			}
 		}()
 	} else {
-		logger.Println("Productivity: Could not observe face position; will only turn toward a person: " + eventErr.Error())
+		cancel()
+		logger.Println("Productivity: Could not observe faces; skipping face search: " + eventErr.Error())
+		return
 	}
 
 	logger.Println("Productivity: Looking for a person before delivering reminder")
-	response, err := robot.Conn.FindFaces(searchCtx, &vectorpb.FindFacesRequest{})
-	searchTimedOut := searchCtx.Err() != nil
-	searchCompleted := err == nil && response.GetResult() == vectorpb.BehaviorResults_BEHAVIOR_COMPLETE_STATE
 
-	// The face event usually arrives just before FindFaces completes. Give the
-	// event stream a brief chance to deliver it before taking the snapshot.
-	if !searchTimedOut {
-		settleTimer := time.NewTimer(300 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			settleTimer.Stop()
-			cancel()
-			return
-		case <-settleTimer.C:
+	// Give face detection a moment before beginning the scan. Each turn is a
+	// small, completed action, so observing a face prevents any further turns.
+	warmupTimer := time.NewTimer(500 * time.Millisecond)
+	select {
+	case <-faceSeen:
+		warmupTimer.Stop()
+	case <-warmupTimer.C:
+	case <-searchCtx.Done():
+	}
+
+	for {
+		if _, found := observations.face(); found {
+			break
+		}
+		if searchCtx.Err() != nil {
+			break
+		}
+
+		turnResponse, err := robot.Conn.TurnInPlace(searchCtx, &vectorpb.TurnInPlaceRequest{
+			AngleRad:        float32(reminderFaceScanStepAngle),
+			SpeedRadPerSec:  reminderFaceScanSpeed,
+			AccelRadPerSec2: 1.5,
+			IdTag:           reminderFaceScanActionTag,
+			NumRetries:      0,
+		})
+		if err != nil {
+			if searchCtx.Err() == nil {
+				logger.Println("Productivity: Face scan turn failed; continuing: " + err.Error())
+			}
+			break
+		}
+		if turnResponse.GetResult() == nil || turnResponse.GetResult().GetCode() != vectorpb.ActionResult_ACTION_RESULT_SUCCESS {
+			logger.Println("Productivity: Face scan turn did not complete; continuing")
+			break
 		}
 	}
 	cancel()
 
 	faceID, faceObserved := observations.face()
 	if !faceObserved {
-		if searchCompleted {
-			logger.Println("Productivity: Face search completed without a trackable face; continuing")
-		} else if searchTimedOut {
-			logger.Println("Productivity: No face observed before reminder; continuing")
-		} else if err != nil {
-			logger.Println("Productivity: Face search failed; continuing: " + err.Error())
-		} else {
-			logger.Println("Productivity: Face search did not find an available person; continuing")
-		}
+		logger.Println("Productivity: No face observed before reminder; continuing")
 		return
 	}
 
