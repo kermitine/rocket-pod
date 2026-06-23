@@ -44,6 +44,7 @@ type Task struct {
 	RetryCount              int
 	RequireConfirmation     bool
 	SnoozeMinutes           int
+	ExpiresAt               time.Time
 	configurationGeneration uint64
 }
 
@@ -72,6 +73,10 @@ const (
 	reminderImageDisplayDuration = 3 * time.Second
 	reminderImageSettleDelay     = 250 * time.Millisecond
 	reminderPageMinimumDuration  = 10 * time.Second
+	reminderPageSpeechBase       = 5 * time.Second
+	reminderPageSpeechPerWord    = 500 * time.Millisecond
+	reminderPageMaximumDuration  = 60 * time.Second
+	reminderDefaultTaskTimeout   = 80 * time.Second
 	reminderFaceSearchTimeout    = 35 * time.Second
 	reminderInitialFaceCheck     = 2 * time.Second
 	reminderFaceTurnTimeout      = 6 * time.Second
@@ -91,6 +96,9 @@ const (
 	reminderDriveStopTimeout     = 2 * time.Second
 	reminderDriveStopSettle      = 200 * time.Millisecond
 	reminderApproachActionTag    = 2400004
+	reminderAvailabilityTimeout  = 10 * time.Second
+	reminderOfflineRetryDelay    = 30 * time.Second
+	reminderLowBatteryRetryDelay = 5 * time.Minute
 	confirmationSpeechSettle     = 350 * time.Millisecond
 	confirmationSpeechRetryDelay = 500 * time.Millisecond
 )
@@ -120,7 +128,7 @@ func InjectTestTask(task Task) {
 }
 
 func retryTask(task Task, reason string) {
-	if !taskIsCurrent(task) {
+	if !taskCanRun(task) {
 		return
 	}
 	if task.RetryCount >= 4 {
@@ -129,12 +137,60 @@ func retryTask(task Task, reason string) {
 	}
 	task.RetryCount++
 	backoff := math.Pow(2, float64(task.RetryCount))
+	requeueTaskAfter(task, time.Duration(backoff)*time.Second)
+}
+
+// deferTask keeps a reminder pending for conditions that are expected to
+// resolve without consuming its limited delivery retries, such as the robot
+// being offline or its battery being low.
+func deferTask(task Task, reason string, delay time.Duration) {
+	if !taskCanRun(task) {
+		return
+	}
+	logger.Println("Productivity: Deferring task " + task.ID + ": " + reason)
+	requeueTaskAfter(task, delay)
+}
+
+func requeueTaskAfter(task Task, delay time.Duration) {
 	go func() {
-		time.Sleep(time.Duration(backoff) * time.Second)
-		if taskIsCurrent(task) {
-			taskQueue <- task
+		var ok bool
+		delay, ok = taskRequeueDelay(task, time.Now(), delay)
+		if !ok {
+			return
+		}
+
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+
+		for taskCanRun(task) {
+			select {
+			case taskQueue <- task:
+				return
+			default:
+				time.Sleep(time.Second)
+			}
 		}
 	}()
+}
+
+func taskRequeueDelay(task Task, now time.Time, requested time.Duration) (time.Duration, bool) {
+	if task.ExpiresAt.IsZero() {
+		return requested, true
+	}
+	remaining := task.ExpiresAt.Sub(now)
+	if remaining <= 0 {
+		return 0, false
+	}
+	if requested > remaining {
+		return remaining, true
+	}
+	return requested, true
+}
+
+func reminderBatteryAllowsDelivery(level vectorpb.BatteryLevel) bool {
+	return level == vectorpb.BatteryLevel_BATTERY_LEVEL_NOMINAL ||
+		level == vectorpb.BatteryLevel_BATTERY_LEVEL_FULL
 }
 
 func snoozeTask(task Task) {
@@ -142,7 +198,7 @@ func snoozeTask(task Task) {
 		logger.Println("Productivity: Test reminders are one-shot and will not be snoozed")
 		return
 	}
-	if !taskIsCurrent(task) {
+	if !taskCanRun(task) {
 		return
 	}
 	duration := 10 * time.Minute
@@ -150,13 +206,8 @@ func snoozeTask(task Task) {
 		duration = time.Duration(task.SnoozeMinutes) * time.Minute
 	}
 	logger.Println("Productivity: Snoozing task " + task.ID + " for " + duration.String())
-	go func() {
-		time.Sleep(duration)
-		task.RetryCount = 0
-		if taskIsCurrent(task) {
-			taskQueue <- task
-		}
-	}()
+	task.RetryCount = 0
+	requeueTaskAfter(task, duration)
 }
 
 // NotifyConfigUpdated invalidates work created from an older productivity
@@ -177,6 +228,14 @@ func taskIsCurrent(task Task) bool {
 	return task.configurationGeneration == currentConfigurationGeneration()
 }
 
+func taskIsExpiredAt(task Task, now time.Time) bool {
+	return !task.ExpiresAt.IsZero() && !now.Before(task.ExpiresAt)
+}
+
+func taskCanRun(task Task) bool {
+	return taskIsCurrent(task) && !taskIsExpiredAt(task, time.Now())
+}
+
 func getReminderState(id string) (bool, bool) {
 	configStr := vars.APIConfig.Productivity.ManualConfig
 	if configStr == "" || configStr == "[]" {
@@ -195,6 +254,10 @@ func getReminderState(id string) (bool, bool) {
 }
 
 func processTask(task Task) {
+	if taskIsExpiredAt(task, time.Now()) {
+		logger.Println("Productivity: Discarding reminder because its scheduled day has ended")
+		return
+	}
 	if !taskIsCurrent(task) {
 		logger.Println("Productivity: Discarding task from an outdated configuration")
 		return
@@ -216,25 +279,45 @@ func processTask(task Task) {
 
 	robot, err := vars.GetRobot(task.RobotESN)
 	if err != nil {
-		retryTask(task, "Robot lookup failed")
+		deferTask(task, "robot is unavailable", reminderOfflineRetryDelay)
 		return
 	}
 
-	if !taskIsCurrent(task) {
+	if !taskCanRun(task) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Second)
+	availabilityCtx, availabilityCancel := context.WithTimeout(context.Background(), reminderAvailabilityTimeout)
+	battResp, err := robot.Conn.BatteryState(availabilityCtx, &vectorpb.BatteryStateRequest{})
+	availabilityCancel()
+	if err != nil || battResp == nil {
+		deferTask(task, "robot is offline", reminderOfflineRetryDelay)
+		return
+	}
+	if !taskCanRun(task) {
+		return
+	}
+	batteryLevel := battResp.GetBatteryLevel()
+	if batteryLevel == vectorpb.BatteryLevel_BATTERY_LEVEL_UNKNOWN {
+		deferTask(task, "battery level is unavailable", reminderOfflineRetryDelay)
+		return
+	}
+	if !reminderBatteryAllowsDelivery(batteryLevel) {
+		deferTask(task, "battery is not above the low level", reminderLowBatteryRetryDelay)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reminderTaskTimeout(task))
 	defer cancel()
 
 	bcClient, err := robot.Conn.BehaviorControl(ctx)
 	if err != nil {
-		retryTask(task, "BC stream failed")
+		deferTask(task, "robot became unavailable", reminderOfflineRetryDelay)
 		return
 	}
 
 	if err := acquireBehaviorControl(bcClient); err != nil {
-		retryTask(task, "Behavior control request failed: "+err.Error())
+		deferTask(task, "robot is not ready for behavior control: "+err.Error(), reminderOfflineRetryDelay)
 		return
 	}
 	controlHeld := true
@@ -247,8 +330,7 @@ func processTask(task Task) {
 		}
 	}()
 
-	battResp, err := robot.Conn.BatteryState(ctx, &vectorpb.BatteryStateRequest{})
-	if err == nil && battResp.IsOnChargerPlatform {
+	if battResp.IsOnChargerPlatform {
 		_, err := robot.Conn.DriveOffCharger(ctx, &vectorpb.DriveOffChargerRequest{})
 		if err != nil {
 			retryTask(task, "Drive off failed")
@@ -256,7 +338,7 @@ func processTask(task Task) {
 		}
 		time.Sleep(5 * time.Second)
 	}
-	if !taskIsCurrent(task) {
+	if !taskCanRun(task) {
 		return
 	}
 
@@ -264,7 +346,7 @@ func processTask(task Task) {
 		logger.Println("Productivity: Reminder presentation canceled because wheel stop could not be confirmed")
 		return
 	}
-	if !taskIsCurrent(task) {
+	if !taskCanRun(task) {
 		return
 	}
 
@@ -305,7 +387,7 @@ func processTask(task Task) {
 			}
 		}
 	}
-	if !taskIsCurrent(task) {
+	if !taskCanRun(task) {
 		return
 	}
 
@@ -323,7 +405,7 @@ func processTask(task Task) {
 	}
 
 	if task.RequireConfirmation {
-		if !taskIsCurrent(task) {
+		if !taskCanRun(task) {
 			return
 		}
 		logger.Println("Productivity: Waiting for confirmation response...")
@@ -339,7 +421,7 @@ func processTask(task Task) {
 		if err != nil {
 			logger.Println("Productivity: Confirmation wait failed: " + err.Error())
 		}
-		if !taskIsCurrent(task) {
+		if !taskCanRun(task) {
 			return
 		}
 
@@ -377,10 +459,7 @@ func processTask(task Task) {
 func processTaskPages(ctx context.Context, robot *vector.Vector, pages []TaskPage) bool {
 	for index, page := range pages {
 		if len(page.FaceData) > 0 {
-			duration := estimatedReminderSpeechDuration(page.Speech) + 2*time.Second
-			if duration < reminderPageMinimumDuration {
-				duration = reminderPageMinimumDuration
-			}
+			duration := estimatedReminderPageDuration(page.Speech)
 			if _, err := robot.Conn.DisplayFaceImageRGB(ctx, &vectorpb.DisplayFaceImageRGBRequest{
 				FaceData:         page.FaceData,
 				DurationMs:       uint32(duration / time.Millisecond),
@@ -415,6 +494,31 @@ func processTaskPages(ctx context.Context, robot *vector.Vector, pages []TaskPag
 		}
 	}
 	return true
+}
+
+func reminderTaskTimeout(task Task) time.Duration {
+	if len(task.Pages) == 0 {
+		return reminderDefaultTaskTimeout
+	}
+	timeout := reminderFaceSearchTimeout + 30*time.Second
+	for _, page := range task.Pages {
+		timeout += estimatedReminderPageDuration(page.Speech)
+	}
+	if timeout < reminderDefaultTaskTimeout {
+		return reminderDefaultTaskTimeout
+	}
+	return timeout
+}
+
+func estimatedReminderPageDuration(speech string) time.Duration {
+	duration := reminderPageSpeechBase + time.Duration(len(strings.Fields(speech)))*reminderPageSpeechPerWord
+	if duration < reminderPageMinimumDuration {
+		return reminderPageMinimumDuration
+	}
+	if duration > reminderPageMaximumDuration {
+		return reminderPageMaximumDuration
+	}
+	return duration
 }
 
 func estimatedReminderSpeechDuration(text string) time.Duration {

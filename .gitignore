@@ -48,3 +48,4 @@
 /chipper/.gomodcache
 .test-gocache
 .test-gopath
+.gopath

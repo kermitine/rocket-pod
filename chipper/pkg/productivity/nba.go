@@ -348,12 +348,16 @@ func setNBATestCompetitor(competitor *nbaCompetitor, homeAway, abbreviation stri
 }
 
 func spokenNBATeamName(competitor nbaCompetitor) string {
+	return spokenNBATeamDisplayName(competitor.Team.DisplayName, competitor.Team.Abbreviation)
+}
+
+func spokenNBATeamDisplayName(displayName, abbreviation string) string {
 	// Vector's TTS expands "LA" as Louisiana, so use the unabbreviated city
 	// for the Clippers regardless of the display name returned by ESPN.
-	if strings.EqualFold(competitor.Team.Abbreviation, "LAC") {
+	if strings.EqualFold(abbreviation, "LAC") || strings.EqualFold(displayName, "LA Clippers") {
 		return "Los Angeles Clippers"
 	}
-	return competitor.Team.DisplayName
+	return displayName
 }
 
 func ordinalQuarter(quarter int) string {

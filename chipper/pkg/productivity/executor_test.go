@@ -6,8 +6,10 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fforchino/vector-go-sdk/pkg/vectorpb"
 )
@@ -149,6 +151,73 @@ func TestTestReminderDoesNotSnooze(t *testing.T) {
 	}
 }
 
+func TestReminderBatteryAllowsDelivery(t *testing.T) {
+	tests := []struct {
+		name  string
+		level vectorpb.BatteryLevel
+		want  bool
+	}{
+		{name: "unknown", level: vectorpb.BatteryLevel_BATTERY_LEVEL_UNKNOWN, want: false},
+		{name: "low", level: vectorpb.BatteryLevel_BATTERY_LEVEL_LOW, want: false},
+		{name: "nominal", level: vectorpb.BatteryLevel_BATTERY_LEVEL_NOMINAL, want: true},
+		{name: "full", level: vectorpb.BatteryLevel_BATTERY_LEVEL_FULL, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := reminderBatteryAllowsDelivery(tt.level); got != tt.want {
+				t.Fatalf("reminderBatteryAllowsDelivery(%v) = %v, want %v", tt.level, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeferredReminderDoesNotExpireAtRetryLimit(t *testing.T) {
+	task := Task{
+		ID:                      "offline-reminder",
+		RetryCount:              4,
+		configurationGeneration: currentConfigurationGeneration(),
+	}
+	deferTask(task, "robot is offline", time.Millisecond)
+
+	select {
+	case got := <-taskQueue:
+		if got.ID != task.ID || got.RetryCount != task.RetryCount {
+			t.Fatalf("deferred task = %#v, want %#v", got, task)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deferred reminder was not requeued")
+	}
+}
+
+func TestTaskExpiresAtEndOfScheduledDay(t *testing.T) {
+	expiresAt := time.Date(2026, time.June, 23, 0, 0, 0, 0, time.UTC)
+	task := Task{ExpiresAt: expiresAt}
+
+	if taskIsExpiredAt(task, expiresAt.Add(-time.Nanosecond)) {
+		t.Fatal("task expired before the end of its scheduled day")
+	}
+	if !taskIsExpiredAt(task, expiresAt) {
+		t.Fatal("task did not expire at the end of its scheduled day")
+	}
+	if taskIsExpiredAt(Task{}, expiresAt.Add(24*time.Hour)) {
+		t.Fatal("task without an expiration unexpectedly expired")
+	}
+}
+
+func TestSnoozeWaitIsCappedAtEndOfDay(t *testing.T) {
+	now := time.Date(2026, time.June, 22, 23, 55, 0, 0, time.UTC)
+	task := Task{ExpiresAt: now.Add(5 * time.Minute)}
+
+	delay, ok := taskRequeueDelay(task, now, 10*time.Minute)
+	if !ok || delay != 5*time.Minute {
+		t.Fatalf("taskRequeueDelay() = (%v, %v), want (5m, true)", delay, ok)
+	}
+	if _, ok := taskRequeueDelay(task, task.ExpiresAt, time.Minute); ok {
+		t.Fatal("expired task was allowed to requeue")
+	}
+}
+
 func TestWaitForReminderImageHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -163,6 +232,17 @@ func TestEstimatedReminderSpeechDuration(t *testing.T) {
 	long := estimatedReminderSpeechDuration("Top performer with twenty points ten rebounds and twelve assists")
 	if short <= 0 || long <= short {
 		t.Fatalf("speech duration estimates short=%v long=%v", short, long)
+	}
+}
+
+func TestStandingsPageDurationCoversLongSpeech(t *testing.T) {
+	longSpeech := strings.TrimSpace(strings.Repeat("standing ", 60))
+	if got := estimatedReminderPageDuration(longSpeech); got != 35*time.Second {
+		t.Fatalf("estimatedReminderPageDuration() = %v, want 35s", got)
+	}
+	task := Task{Pages: []TaskPage{{Speech: longSpeech}, {Speech: longSpeech}, {Speech: longSpeech}}}
+	if got := reminderTaskTimeout(task); got <= reminderDefaultTaskTimeout {
+		t.Fatalf("reminderTaskTimeout() = %v, want more than %v", got, reminderDefaultTaskTimeout)
 	}
 }
 

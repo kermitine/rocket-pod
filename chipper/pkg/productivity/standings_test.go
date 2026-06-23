@@ -16,8 +16,13 @@ func TestMatchStandingsVoiceCommand(t *testing.T) {
 		{"show me the eastern conference standings", standingsNBAEast, true},
 		{"show the eastern standings", standingsNBAEast, true},
 		{"what are the NBA western conference rankings", standingsNBAWest, true},
+		{"and b a western conference standings", standingsNBAWest, true},
+		{"N. B. A. standings", standingsNBAAll, true},
 		{"show the NBA standings", standingsNBAAll, true},
 		{"show Formula 1 driver standings", standingsF1Drivers, true},
+		{"if one driver standings", standingsF1Drivers, true},
+		{"driver championship rankings", standingsF1Drivers, true},
+		{"f one constructor table", standingsF1Constructors, true},
 		{"F1 constructor leaderboard", standingsF1Constructors, true},
 		{"constructor standings", standingsF1Constructors, true},
 		{"help me understand NBA teams", "", false},
@@ -27,6 +32,20 @@ func TestMatchStandingsVoiceCommand(t *testing.T) {
 		kind, ok := MatchStandingsVoiceCommand(tt.text)
 		if kind != tt.kind || ok != tt.ok {
 			t.Errorf("MatchStandingsVoiceCommand(%q) = %q, %v; want %q, %v", tt.text, kind, ok, tt.kind, tt.ok)
+		}
+	}
+}
+
+func TestNormalizeStandingsVoiceTextHandlesASRConfusions(t *testing.T) {
+	tests := map[string]string{
+		"and be a standings":   "nba standings",
+		"n. b. a. standings":   "nba standings",
+		"if won standings":     "f1 standings",
+		"formula won rankings": "formula one rankings",
+	}
+	for input, want := range tests {
+		if got := normalizeStandingsVoiceText(input); got != want {
+			t.Errorf("normalizeStandingsVoiceText(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
@@ -72,6 +91,43 @@ func TestF1StandingsPagesIncludeEveryDriverAndConstructor(t *testing.T) {
 	if !strings.Contains(standingsPageSpeech(constructorPages), "Constructor 11") {
 		t.Fatal("constructor speech omitted the final constructor")
 	}
+	if strings.Contains(standingsPageSpeech(constructorPages), ", 0 points") || !strings.Contains(standingsPageSpeech(constructorPages), "299 points") {
+		t.Fatalf("constructor speech has incorrect points: %s", standingsPageSpeech(constructorPages))
+	}
+}
+
+func TestStandingsPagesSortRowsByPosition(t *testing.T) {
+	rows := []standingsRow{
+		{Position: 3, Name: "Third", Speech: "three points"},
+		{Position: 1, Name: "First", Speech: "one point"},
+		{Position: 2, Name: "Second", Speech: "two points"},
+	}
+	pages := standingsTaskPages(context.Background(), "Standings", "standings", rows, false)
+	if len(pages) != 1 {
+		t.Fatalf("pages = %d, want 1", len(pages))
+	}
+	speech := pages[0].Speech
+	first := strings.Index(speech, "First")
+	second := strings.Index(speech, "Second")
+	third := strings.Index(speech, "Third")
+	if first < 0 || second <= first || third <= second {
+		t.Fatalf("standings speech is not ordered by position: %s", speech)
+	}
+}
+
+func TestNBAStandingsExpandClippersCityForSpeech(t *testing.T) {
+	group := standingsNBAGroup("Western Conference", "W", 1)
+	group.Standings.Entries[0].Team.DisplayName = "LA Clippers"
+	group.Standings.Entries[0].Team.Abbreviation = "LAC"
+	response := espnStandingsResponse{Children: []espnStandingsGroup{group}}
+
+	pages, err := nbaStandingsPages(context.Background(), response, standingsNBAWest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if speech := standingsPageSpeech(pages); !strings.Contains(speech, "Los Angeles Clippers") {
+		t.Fatalf("Clippers city was not expanded for speech: %s", speech)
+	}
 }
 
 func TestF1OrdinalLong(t *testing.T) {
@@ -110,7 +166,11 @@ func standingsF1Group(name string, constructors bool, count int) espnStandingsGr
 			entry.Athlete.ID = fmt.Sprint(1000 + position)
 			entry.Athlete.DisplayName = fmt.Sprintf("Driver %d", position)
 		}
-		entry.Stats = []espnStandingStat{{Name: "rank", DisplayValue: fmt.Sprint(position)}, {Name: "championshipPts", DisplayValue: fmt.Sprint(300 - position)}}
+		pointsName := "championshipPts"
+		if constructors {
+			pointsName = "points"
+		}
+		entry.Stats = []espnStandingStat{{Name: "rank", DisplayValue: fmt.Sprint(position)}, {Name: pointsName, DisplayValue: fmt.Sprint(300 - position)}}
 		group.Standings.Entries = append(group.Standings.Entries, entry)
 	}
 	return group

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/draw"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -78,11 +79,11 @@ type standingsRow struct {
 }
 
 func MatchStandingsVoiceCommand(text string) (string, bool) {
-	text = strings.ToLower(strings.TrimSpace(text))
+	text = normalizeStandingsVoiceText(text)
 	if !containsAnyWord(text, "standing", "standings", "leaderboard", "rankings", "table") {
 		return "", false
 	}
-	if containsAny(text, "formula one", "formula 1", "f1") || containsAnyWord(text, "constructor", "constructors") {
+	if containsAny(text, "formula one", "formula 1", "f1", "grand prix") || containsAnyWord(text, "driver", "drivers", "constructor", "constructors") {
 		if containsAny(text, "constructor", "constructors", "team", "teams") {
 			return standingsF1Constructors, true
 		}
@@ -98,6 +99,28 @@ func MatchStandingsVoiceCommand(text string) (string, bool) {
 		return standingsNBAAll, true
 	}
 	return "", false
+}
+
+func normalizeStandingsVoiceText(text string) string {
+	text = strings.ToLower(text)
+	text = strings.Join(strings.FieldsFunc(text, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	}), " ")
+	replacer := strings.NewReplacer(
+		"and be a", "nba",
+		"and b a", "nba",
+		"n be a", "nba",
+		"n b a", "nba",
+		"in b a", "nba",
+		"m b a", "nba",
+		"formula won", "formula one",
+		"if won", "f1",
+		"if one", "f1",
+		"f won", "f1",
+		"f one", "f1",
+		"f 1", "f1",
+	)
+	return strings.Join(strings.Fields(replacer.Replace(text)), " ")
 }
 
 func containsAnyWord(text string, values ...string) bool {
@@ -213,7 +236,7 @@ func nbaStandingsPages(ctx context.Context, response espnStandingsResponse, kind
 			}
 			rows = append(rows, standingsRow{
 				Position:  position,
-				Name:      entry.Team.DisplayName,
+				Name:      spokenNBATeamDisplayName(entry.Team.DisplayName, entry.Team.Abbreviation),
 				FaceName:  entry.Team.Abbreviation,
 				Detail:    wins + "-" + losses,
 				Speech:    fmt.Sprintf("%s wins and %s losses", wins, losses),
@@ -243,7 +266,7 @@ func f1StandingsPages(response espnStandingsResponse, kind string) ([]TaskPage, 
 		}
 		rows := make([]standingsRow, 0, len(group.Standings.Entries))
 		for index, entry := range group.Standings.Entries {
-			points := standingStat(entry.Stats, "championshipPts")
+			points := standingStat(entry.Stats, "championshipPts", "points")
 			position := standingPosition(entry.Stats, index+1, "rank")
 			row := standingsRow{Position: position, Detail: points + " PTS", Speech: points + " points"}
 			if isConstructor {
@@ -277,6 +300,9 @@ func f1StandingsPages(response espnStandingsResponse, kind string) ([]TaskPage, 
 }
 
 func standingsTaskPages(ctx context.Context, title, speechTitle string, rows []standingsRow, showLogos bool) []TaskPage {
+	sort.SliceStable(rows, func(i, j int) bool {
+		return rows[i].Position < rows[j].Position
+	})
 	pages := make([]TaskPage, 0, (len(rows)+standingsEntriesPerPage-1)/standingsEntriesPerPage)
 	for start := 0; start < len(rows); start += standingsEntriesPerPage {
 		end := start + standingsEntriesPerPage
@@ -339,13 +365,15 @@ func standingsErrorPages(kind string, err error) []TaskPage {
 	return []TaskPage{{FaceData: convertImageToVectorFaceData(canvas), Speech: "Sorry, I couldn't get the current standings."}}
 }
 
-func standingStat(stats []espnStandingStat, wanted string) string {
+func standingStat(stats []espnStandingStat, wanted ...string) string {
 	for _, stat := range stats {
-		if strings.EqualFold(stat.Name, wanted) || strings.EqualFold(stat.Type, wanted) {
-			if strings.TrimSpace(stat.DisplayValue) != "" {
-				return stat.DisplayValue
+		for _, candidate := range wanted {
+			if strings.EqualFold(stat.Name, candidate) || strings.EqualFold(stat.Type, candidate) {
+				if strings.TrimSpace(stat.DisplayValue) != "" {
+					return stat.DisplayValue
+				}
+				return strconv.Itoa(int(stat.Value))
 			}
-			return strconv.Itoa(int(stat.Value))
 		}
 	}
 	return "0"

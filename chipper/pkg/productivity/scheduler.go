@@ -200,6 +200,7 @@ func checkManualReminders(esn string, configStr string, generation uint64) {
 	currentHHMM := now.Format("15:04")
 	currentMinute := now.Minute()
 	currentHour := now.Hour()
+	expiresAt := endOfProductivityDay(now)
 
 	for _, r := range reminders {
 		if generation != currentConfigurationGeneration() {
@@ -268,6 +269,7 @@ func checkManualReminders(esn string, configStr string, generation uint64) {
 				Source:                  "manual",
 				RequireConfirmation:     r.RequireConfirmation,
 				SnoozeMinutes:           r.SnoozeMinutes,
+				ExpiresAt:               expiresAt,
 				configurationGeneration: generation,
 			}:
 				logger.Println("Productivity: Scheduled manual task " + r.ID)
@@ -279,6 +281,11 @@ func checkManualReminders(esn string, configStr string, generation uint64) {
 			}
 		}
 	}
+}
+
+func endOfProductivityDay(now time.Time) time.Time {
+	year, month, day := now.Date()
+	return time.Date(year, month, day+1, 0, 0, 0, 0, now.Location())
 }
 
 // Reminder times come from an HTML time input and therefore represent the
