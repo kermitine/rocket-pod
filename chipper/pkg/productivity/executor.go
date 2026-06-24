@@ -101,8 +101,11 @@ const (
 	reminderApproachSpeedMMPS    = 35
 	reminderApproachTimeout      = 6 * time.Second
 	reminderDriveStateWarmup     = 750 * time.Millisecond
-	reminderDriveStopTimeout     = 2 * time.Second
+	reminderDriveStopTimeout     = 3 * time.Second
+	reminderDriveVerifyTimeout   = 4 * time.Second
 	reminderDriveStopSettle      = 200 * time.Millisecond
+	reminderDriveStopRetryDelay  = 250 * time.Millisecond
+	reminderDriveStopAttempts    = 2
 	reminderApproachActionTag    = 2400004
 	reminderAvailabilityTimeout  = 10 * time.Second
 	reminderOfflineRetryDelay    = 30 * time.Second
@@ -967,12 +970,12 @@ func driveStraightForReminder(ctx context.Context, robot *vector.Vector) bool {
 		logger.Println("Productivity: Reminder approach was stopped by robot safety")
 	}
 
-	stopCtx, stopCancel := context.WithTimeout(ctx, reminderDriveStopTimeout)
-	defer stopCancel()
-	if _, err := robot.Conn.StopAllMotors(stopCtx, &vectorpb.StopAllMotorsRequest{}); err != nil {
+	if err := stopReminderMotors(ctx, robot); err != nil {
 		logger.Println("Productivity: Could not issue final motor stop: " + err.Error())
 	}
-	if !waitForReminderWheelsStopped(stopCtx, robot) {
+	verifyCtx, verifyCancel := context.WithTimeout(ctx, reminderDriveVerifyTimeout)
+	defer verifyCancel()
+	if !waitForReminderWheelsStopped(verifyCtx, robot) {
 		logger.Println("Productivity: Wheels did not report stopped after reminder approach")
 		return false
 	}
@@ -1006,13 +1009,37 @@ func reminderRobotStateStopped(state *vectorpb.RobotState) bool {
 
 func cancelReminderDrive(robot *vector.Vector) {
 	cancelCtx, cancel := context.WithTimeout(context.Background(), reminderDriveStopTimeout)
-	defer cancel()
 	if _, err := robot.Conn.CancelActionByIdTag(cancelCtx, &vectorpb.CancelActionByIdTagRequest{IdTag: reminderApproachActionTag}); err != nil {
 		logger.Println("Productivity: Could not cancel reminder drive action: " + err.Error())
 	}
-	if _, err := robot.Conn.StopAllMotors(cancelCtx, &vectorpb.StopAllMotorsRequest{}); err != nil {
+	cancel()
+	if err := stopReminderMotors(context.Background(), robot); err != nil {
 		logger.Println("Productivity: Could not stop reminder drive motors: " + err.Error())
 	}
+}
+
+func stopReminderMotors(ctx context.Context, robot *vector.Vector) error {
+	var lastErr error
+	for attempt := 0; attempt < reminderDriveStopAttempts; attempt++ {
+		stopCtx, cancel := context.WithTimeout(ctx, reminderDriveStopTimeout)
+		_, err := robot.Conn.StopAllMotors(stopCtx, &vectorpb.StopAllMotorsRequest{})
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || attempt == reminderDriveStopAttempts-1 {
+			break
+		}
+		retry := time.NewTimer(reminderDriveStopRetryDelay)
+		select {
+		case <-ctx.Done():
+			retry.Stop()
+			return ctx.Err()
+		case <-retry.C:
+		}
+	}
+	return lastErr
 }
 
 func waitForReminderWheelsStopped(ctx context.Context, robot *vector.Vector) bool {

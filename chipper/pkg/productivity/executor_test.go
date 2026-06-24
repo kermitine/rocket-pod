@@ -341,6 +341,18 @@ func TestReminderDriveRequestIsShortAndBounded(t *testing.T) {
 	}
 }
 
+func TestReminderDriveStopHasIndependentRetryAndVerificationBudgets(t *testing.T) {
+	if reminderDriveStopAttempts < 2 {
+		t.Fatalf("motor stop attempts = %d, want at least 2", reminderDriveStopAttempts)
+	}
+	if reminderDriveStopTimeout <= 2*time.Second {
+		t.Fatalf("motor stop timeout = %v, want more than 2s", reminderDriveStopTimeout)
+	}
+	if reminderDriveVerifyTimeout <= reminderDriveStopTimeout {
+		t.Fatalf("wheel verification timeout = %v, want more than stop timeout %v", reminderDriveVerifyTimeout, reminderDriveStopTimeout)
+	}
+}
+
 func TestReminderRobotStateCliffAndStoppedChecks(t *testing.T) {
 	stopped := &vectorpb.RobotState{}
 	if !reminderRobotStateStopped(stopped) {
