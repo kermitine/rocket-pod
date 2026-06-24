@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
@@ -97,7 +96,6 @@ const (
 	reminderLowestLiftHeightMM   = 32
 	reminderFaceScanSpeed        = 1.0
 	reminderFaceScanPause        = 250 * time.Millisecond
-	reminderFaceScanImageTime    = 2500 * time.Millisecond
 	reminderFaceScanMaxSteps     = 23
 	reminderApproachDistanceMM   = 100
 	reminderApproachSpeedMMPS    = 35
@@ -109,12 +107,14 @@ const (
 	reminderAvailabilityTimeout  = 10 * time.Second
 	reminderOfflineRetryDelay    = 30 * time.Second
 	reminderLowBatteryRetryDelay = 5 * time.Minute
-	confirmationSpeechSettle     = 350 * time.Millisecond
-	confirmationSpeechRetryDelay = 500 * time.Millisecond
+	confirmationSpeechSettle     = time.Second
+	confirmationSpeechRetryDelay = 750 * time.Millisecond
+	confirmationSpeechAttempts   = 3
 	confirmationListenRetryDelay = 1500 * time.Millisecond
 	confirmationListenAttempts   = 3
 	acknowledgementSettle        = 350 * time.Millisecond
 	acknowledgementRetryDelay    = 500 * time.Millisecond
+	reminderFaceSearchAnimation  = "anim_knowledgegraph_searching_01"
 )
 
 var (
@@ -387,7 +387,7 @@ func processTask(task Task) {
 	if !taskCanRun(task) {
 		return
 	}
-	if !facePersonForReminder(ctx, robot) {
+	if !facePersonForReminder(ctx, robot, task.RobotESN) {
 		logger.Println("Productivity: Reminder presentation canceled because wheel stop could not be confirmed")
 		return
 	}
@@ -613,8 +613,8 @@ func displayReminderFaceData(ctx context.Context, robot *vector.Vector, faceData
 }
 
 // Voice-intent handling can still be releasing its audio and face tracks when
-// behavior control is granted back to us. Allow it to settle, then retry once
-// if SayText loses that short race.
+// behavior control is granted back to us. Allow it to settle, then retry if
+// SayText loses that race while VIC finishes cleaning up the voice session.
 func sayConfirmationResponse(ctx context.Context, robot *vector.Vector, text string) error {
 	settleTimer := time.NewTimer(confirmationSpeechSettle)
 	select {
@@ -625,13 +625,13 @@ func sayConfirmationResponse(ctx context.Context, robot *vector.Vector, text str
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < confirmationSpeechAttempts; attempt++ {
 		if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: speechWithoutDiacritics(text), UseVectorVoice: true}); err == nil {
 			return nil
 		} else {
 			lastErr = err
 		}
-		if attempt == 0 {
+		if attempt < confirmationSpeechAttempts-1 {
 			retryTimer := time.NewTimer(confirmationSpeechRetryDelay)
 			select {
 			case <-ctx.Done():
@@ -652,6 +652,30 @@ func acknowledgementAnimationRequest(name string) *vectorpb.PlayAnimationRequest
 		IgnoreHeadTrack: true,
 		IgnoreLiftTrack: true,
 	}
+}
+
+func reminderFaceSearchAnimationRequest() *vectorpb.PlayAnimationRequest {
+	return &vectorpb.PlayAnimationRequest{
+		Animation:       &vectorpb.Animation{Name: reminderFaceSearchAnimation},
+		Loops:           1,
+		IgnoreBodyTrack: true,
+		IgnoreHeadTrack: true,
+		IgnoreLiftTrack: true,
+	}
+}
+
+func playReminderFaceSearchAnimation(ctx context.Context, robot *vector.Vector) error {
+	response, err := robot.Conn.PlayAnimation(ctx, reminderFaceSearchAnimationRequest())
+	if err != nil {
+		return err
+	}
+	if response == nil {
+		return fmt.Errorf("animation returned no response")
+	}
+	if response.GetResult() != vectorpb.BehaviorResults_BEHAVIOR_COMPLETE_STATE {
+		return fmt.Errorf("animation returned %s", response.GetResult().String())
+	}
+	return nil
 }
 
 // Voice intent handling can hold its face track briefly after returning its
@@ -734,14 +758,10 @@ func (o *faceSearchObservations) face() (int32, bool) {
 // Scan in small, completed turns until the event stream reports a tracked face,
 // explicitly face it, and make one short, cliff-monitored approach. Presentation
 // is gated on positive confirmation that both wheels have stopped.
-func facePersonForReminder(ctx context.Context, robot *vector.Vector) bool {
+func facePersonForReminder(ctx context.Context, robot *vector.Vector, esn string) bool {
 	positionReminderLiftDown(ctx, robot)
 	positionReminderHeadForViewing(ctx, robot, "before face scan")
 	defer positionReminderHeadForViewing(ctx, robot, "before reminder display")
-	var faceSearchImageExpiresAt time.Time
-	defer func() {
-		waitForReminderFaceSearchImage(ctx, faceSearchImageExpiresAt)
-	}()
 
 	searchCtx, cancel := context.WithTimeout(ctx, reminderFaceSearchTimeout)
 	observations := &faceSearchObservations{}
@@ -774,8 +794,14 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector) bool {
 	}
 
 	logger.Println("Productivity: Looking for a person before delivering reminder")
-	displayReminderFaceSearchExpression(searchCtx, robot)
-	faceSearchImageExpiresAt = time.Now().Add(reminderFaceScanImageTime)
+	if err := playReminderFaceSearchAnimation(searchCtx, robot); err != nil && searchCtx.Err() == nil {
+		logger.Println("Productivity: Face-search animation failed; continuing scan: " + err.Error())
+	}
+	if ip := robotIPForESN(esn); ip != "" {
+		if err := stopReminderAnimationAudio(searchCtx, ip); err != nil && searchCtx.Err() == nil {
+			logger.Println("Productivity: Could not stop face-search audio: " + err.Error())
+		}
+	}
 
 	// Give face detection a moment before beginning the scan. Each turn is a
 	// small, completed action, so observing a face prevents any further turns.
@@ -795,9 +821,6 @@ scanLoop:
 		if searchCtx.Err() != nil {
 			break
 		}
-		displayReminderFaceSearchExpression(searchCtx, robot)
-		faceSearchImageExpiresAt = time.Now().Add(reminderFaceScanImageTime)
-
 		turnResponse, err := robot.Conn.TurnInPlace(searchCtx, &vectorpb.TurnInPlaceRequest{
 			AngleRad:        float32(reminderFaceScanStepAngle),
 			SpeedRadPerSec:  reminderFaceScanSpeed,
@@ -1055,57 +1078,6 @@ func reminderLiftHeightRequest() *vectorpb.SetLiftHeightRequest {
 	}
 }
 
-func displayReminderFaceSearchExpression(ctx context.Context, robot *vector.Vector) {
-	if _, err := robot.Conn.DisplayFaceImageRGB(ctx, reminderFaceSearchImageRequest()); err != nil && ctx.Err() == nil {
-		logger.Println("Productivity: Could not display face-search expression: " + err.Error())
-	}
-}
-
-func waitForReminderFaceSearchImage(ctx context.Context, expiresAt time.Time) {
-	remaining := time.Until(expiresAt.Add(reminderImageSettleDelay))
-	if remaining <= 0 {
-		return
-	}
-	timer := time.NewTimer(remaining)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-	case <-timer.C:
-	}
-}
-
-func reminderFaceSearchImageRequest() *vectorpb.DisplayFaceImageRGBRequest {
-	return &vectorpb.DisplayFaceImageRGBRequest{
-		FaceData:         reminderFaceSearchData(),
-		DurationMs:       uint32(reminderFaceScanImageTime / time.Millisecond),
-		InterruptRunning: true,
-	}
-}
-
-func reminderFaceSearchData() []byte {
-	face := image.NewNRGBA(image.Rect(0, 0, 184, 96))
-	eyeColor := color.NRGBA{R: 0, G: 255, B: 225, A: 255}
-	for _, centerX := range []int{58, 126} {
-		for y := 24; y < 70; y++ {
-			for x := centerX - 17; x <= centerX+17; x++ {
-				dx := float64(x-centerX) / 17
-				dy := float64(y-47) / 23
-				if dx*dx+dy*dy <= 1 {
-					face.SetNRGBA(x, y, eyeColor)
-				}
-			}
-		}
-	}
-	for x := 86; x <= 98; x += 6 {
-		for y := 78; y <= 82; y++ {
-			for dotX := x - 2; dotX <= x+2; dotX++ {
-				face.SetNRGBA(dotX, y, eyeColor)
-			}
-		}
-	}
-	return convertImageToVectorFaceData(face)
-}
-
 func reminderHeadAngleRequest() *vectorpb.SetHeadAngleRequest {
 	return &vectorpb.SetHeadAngleRequest{
 		AngleRad:          float32(reminderViewingHeadAngle),
@@ -1332,6 +1304,24 @@ func robotIPForESN(esn string) string {
 		}
 	}
 	return ""
+}
+
+func stopReminderAnimationAudio(ctx context.Context, ip string) error {
+	url := fmt.Sprintf("http://%s:8889/consolefunccall?func=StopAllAudioEvents", ip)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("robot console returned %s", response.Status)
+	}
+	return nil
 }
 
 func classifyConfirmationIntent(intent string) confirmationResult {

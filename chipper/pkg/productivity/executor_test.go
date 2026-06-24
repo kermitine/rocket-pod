@@ -1,7 +1,6 @@
 package productivity
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -254,13 +253,13 @@ func TestAcknowledgementAnimationRequestUsesOnlyFaceTrack(t *testing.T) {
 	}
 }
 
-func TestReminderFaceSearchImageRequestHasVisibleFace(t *testing.T) {
-	request := reminderFaceSearchImageRequest()
-	if len(request.GetFaceData()) != 184*96*2 || request.GetDurationMs() == 0 || !request.GetInterruptRunning() {
-		t.Fatalf("face-search image request is incomplete: %#v", request)
+func TestReminderFaceSearchAnimationRequestUsesOnlyFaceTrack(t *testing.T) {
+	request := reminderFaceSearchAnimationRequest()
+	if request.GetAnimation().GetName() != reminderFaceSearchAnimation || request.GetLoops() != 1 {
+		t.Fatalf("face-search request has wrong animation: %#v", request)
 	}
-	if !bytes.Contains(request.GetFaceData(), []byte{0x07, 0xFC}) {
-		t.Fatal("face-search image has no visible cyan pixels")
+	if !request.GetIgnoreBodyTrack() || !request.GetIgnoreHeadTrack() || !request.GetIgnoreLiftTrack() {
+		t.Fatalf("face-search request can block physical scan tracks: %#v", request)
 	}
 }
 
