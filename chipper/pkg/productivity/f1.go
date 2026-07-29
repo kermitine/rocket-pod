@@ -610,9 +610,9 @@ func f1LeaderboardSpeech(event f1Event, race f1Competition, drivers []f1Competit
 	if kind == "final" {
 		prefix = "Final F1 " + sessionName + " result"
 	} else if kind == "leader" {
-		prefix = "F1 " + sessionName + " notable moment. Leader change"
+		prefix = "F1 Alert. " + sessionName + " leader change"
 	} else if kind == "phase" {
-		prefix = "F1 " + sessionName + " notable moment"
+		prefix = "F1 Alert. " + sessionName
 	}
 	if phase := f1QualifyingPhase(race); phase != "" {
 		prefix += ", " + phase

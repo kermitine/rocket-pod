@@ -153,6 +153,18 @@ func TestF1NotableQualifyingPhaseChange(t *testing.T) {
 	}
 }
 
+func TestF1NotableSpeechUsesAlertPrefix(t *testing.T) {
+	event, session := syntheticF1LiveQualifying()
+	leaderSpeech := f1LeaderboardSpeech(event, session, session.Competitors[:5], 0, "leader")
+	if !strings.HasPrefix(leaderSpeech, "F1 Alert. qualifying leader change") {
+		t.Fatalf("leader alert speech = %q", leaderSpeech)
+	}
+	phaseSpeech := f1LeaderboardSpeech(event, session, session.Competitors[:5], 0, "phase")
+	if !strings.HasPrefix(phaseSpeech, "F1 Alert. qualifying") {
+		t.Fatalf("phase alert speech = %q", phaseSpeech)
+	}
+}
+
 func TestF1LeaderboardPagesShowAndSpeakTopTen(t *testing.T) {
 	event, race := syntheticF1Race()
 	pages, err := f1LeaderboardTaskPages(event, race, "final")

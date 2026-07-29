@@ -808,15 +808,15 @@ func nbaNotableMoment(game nbaEvent, away, home nbaCompetitor) (string, bool) {
 	if previous.Leader != "" && previous.Leader != leader {
 		switch leader {
 		case "away":
-			return fmt.Sprintf("NBA notable moment. The %s have taken the lead, %d to %d. %s.", spokenNBATeamName(away), awayScore, homeScore, spokenNBAGameDetail(detail)), true
+			return fmt.Sprintf("NBA Alert. The %s have taken the lead, %d to %d. %s.", spokenNBATeamName(away), awayScore, homeScore, spokenNBAGameDetail(detail)), true
 		case "home":
-			return fmt.Sprintf("NBA notable moment. The %s have taken the lead, %d to %d. %s.", spokenNBATeamName(home), homeScore, awayScore, spokenNBAGameDetail(detail)), true
+			return fmt.Sprintf("NBA Alert. The %s have taken the lead, %d to %d. %s.", spokenNBATeamName(home), homeScore, awayScore, spokenNBAGameDetail(detail)), true
 		case "tie":
-			return fmt.Sprintf("NBA notable moment. The game is tied at %d. %s.", awayScore, spokenNBAGameDetail(detail)), true
+			return fmt.Sprintf("NBA Alert. The game is tied at %d. %s.", awayScore, spokenNBAGameDetail(detail)), true
 		}
 	}
 	if clutch && !previous.ClutchNotified {
-		return fmt.Sprintf("NBA notable moment. Close game. %s, %d. %s, %d. %s.", spokenNBATeamName(away), awayScore, spokenNBATeamName(home), homeScore, spokenNBAGameDetail(detail)), true
+		return fmt.Sprintf("NBA Alert. Close game. %s, %d. %s, %d. %s.", spokenNBATeamName(away), awayScore, spokenNBATeamName(home), homeScore, spokenNBAGameDetail(detail)), true
 	}
 	return "", false
 }

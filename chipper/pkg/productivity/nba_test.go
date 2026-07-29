@@ -68,7 +68,7 @@ func TestNBANotableLeadChangeBypassesLiveInterval(t *testing.T) {
 	markNBANotified(game.ID, kind, now)
 	game.Competitions[0].Competitors[1].Score = "101"
 	kind, phrase, notify := nbaNotificationForGame(game, config, now.Add(time.Minute))
-	if !notify || kind != "notable" || !strings.Contains(phrase, "taken the lead") {
+	if !notify || kind != "notable" || !strings.HasPrefix(phrase, "NBA Alert.") || !strings.Contains(phrase, "taken the lead") {
 		t.Fatalf("lead-change notification = (%q, %q, %v)", kind, phrase, notify)
 	}
 }
@@ -88,7 +88,7 @@ func TestNBANotableLateCloseGame(t *testing.T) {
 	game.Competitions[0].Competitors[1].Score = "98"
 	game.Status.Type.ShortDetail = "1:30 - 4th"
 	kind, phrase, notify := nbaNotificationForGame(game, config, now.Add(time.Minute))
-	if !notify || kind != "notable" || !strings.Contains(phrase, "Close game") {
+	if !notify || kind != "notable" || !strings.HasPrefix(phrase, "NBA Alert.") || !strings.Contains(phrase, "Close game") {
 		t.Fatalf("clutch notification = (%q, %q, %v)", kind, phrase, notify)
 	}
 }
