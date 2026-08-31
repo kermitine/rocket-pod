@@ -114,6 +114,38 @@ func TestNotifyConfirmationIntentDeliversAcceptedResult(t *testing.T) {
 	}
 }
 
+func TestConsumeConfirmationIntentSuppressesNormalIntentResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const esn = "test-esn"
+	session := registerConfirmationListeningSession(ctx, esn, "")
+	defer unregisterConfirmationListeningSession(esn, session)
+
+	if !ConsumeConfirmationIntent(esn, "intent_greeting_hello") {
+		t.Fatal("ConsumeConfirmationIntent() = false, want true while confirmation is active")
+	}
+
+	select {
+	case got := <-session.results:
+		t.Fatalf("unrelated intent delivered result = %v, want retry without result", got)
+	default:
+	}
+
+	if !ConsumeConfirmationIntent(esn, "intent_imperative_affirmative") {
+		t.Fatal("ConsumeConfirmationIntent() = false for affirmative, want true")
+	}
+
+	select {
+	case got := <-session.results:
+		if got != confirmationAccepted {
+			t.Fatalf("delivered result = %v, want %v", got, confirmationAccepted)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("confirmation result was not delivered")
+	}
+}
+
 func TestMatchesPartialAffirmativeKeyphrase(t *testing.T) {
 	tests := []struct {
 		name      string

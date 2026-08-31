@@ -111,6 +111,7 @@ const (
 	confirmationSpeechSettle     = time.Second
 	confirmationSpeechRetryDelay = 750 * time.Millisecond
 	confirmationSpeechAttempts   = 3
+	confirmationListenSettle     = 1250 * time.Millisecond
 	confirmationListenRetryDelay = 1500 * time.Millisecond
 	confirmationListenAttempts   = 3
 	acknowledgementSettle        = 350 * time.Millisecond
@@ -517,7 +518,7 @@ func processTask(task Task) {
 
 		switch result {
 		case confirmationAccepted:
-			if err := sayConfirmationResponse(ctx, robot, "Great!"); err != nil {
+			if err := sayConfirmationResponse(ctx, robot, "Affirmative."); err != nil {
 				logger.Println("Productivity: Confirmation response speech failed: " + err.Error())
 			}
 			logger.Println("Productivity: Confirmation successful.")
@@ -1172,17 +1173,23 @@ func waitForConfirmation(ctx context.Context, robot *vector.Vector, esn string) 
 	confirmationCtx, cancel := context.WithTimeout(ctx, reminderConfirmationTimeout)
 	defer cancel()
 
-	// Give VIC time to process the control release before simulating the
-	// button press that enables normal voice-intent handling.
-	releaseDelay := time.NewTimer(500 * time.Millisecond)
+	ip := robotIPForESN(esn)
+	if ip != "" {
+		if err := stopReminderAnimationAudio(confirmationCtx, ip); err != nil && confirmationCtx.Err() == nil {
+			logger.Println("Productivity: Could not stop reminder audio before confirmation listening: " + err.Error())
+		}
+	}
+
+	// Give VIC time to process the control release and settle any lingering
+	// audio/animation tracks before simulating the button press that enables
+	// normal voice-intent handling.
+	releaseDelay := time.NewTimer(confirmationListenSettle)
 	defer releaseDelay.Stop()
 	select {
 	case <-confirmationCtx.Done():
 		return confirmationTimedOut, nil
 	case <-releaseDelay.C:
 	}
-
-	ip := robotIPForESN(esn)
 
 	eventStream, err := robot.Conn.EventStream(confirmationCtx, &vectorpb.EventRequest{})
 	if err != nil {
@@ -1320,6 +1327,25 @@ func NotifyConfirmationIntent(esn string, intent string) bool {
 		return session.queueRetry("Confirmation was not yes or no")
 	}
 	return session.deliverResult(result)
+}
+
+// ConsumeConfirmationIntent routes a voice-intent result into an active
+// reminder confirmation and reports whether the normal robot intent response
+// should be suppressed.
+func ConsumeConfirmationIntent(esn string, intent string) bool {
+	confirmationListeningSessions.Lock()
+	session := confirmationListeningSessions.byESN[esn]
+	confirmationListeningSessions.Unlock()
+	if session == nil || session.ctx.Err() != nil {
+		return false
+	}
+	result := classifyConfirmationIntent(intent)
+	if result == confirmationTimedOut {
+		session.queueRetry("Confirmation was not yes or no")
+		return true
+	}
+	session.deliverResult(result)
+	return true
 }
 
 func (s *confirmationListeningSession) deliverResult(result confirmationResult) bool {

@@ -35,6 +35,13 @@ func IntentPass(req interface{}, intentThing string, speechText string, intentPa
 		isIntentGraph = true
 	}
 
+	confirmationConsumed := productivity.ConsumeConfirmationIntent(esn, intentThing)
+	if confirmationConsumed {
+		intentThing = "intent_system_noaudio"
+		intentParams = nil
+		isParam = false
+	}
+
 	// intercept if not intent graph but intent graph is enabled
 	if !isIntentGraph && vars.APIConfig.Knowledge.IntentGraph && intentThing == "intent_system_unmatched" {
 		intentThing = "intent_greeting_hello"
@@ -74,7 +81,9 @@ func IntentPass(req interface{}, intentThing string, speechText string, intentPa
 		r := &vtt.IntentResponse{
 			Intent: &intent,
 		}
-		productivity.NotifyConfirmationIntent(esn, intentThing)
+		if !confirmationConsumed {
+			productivity.NotifyConfirmationIntent(esn, intentThing)
+		}
 		logger.Println("Bot " + esn + " Intent Sent: " + intentThing)
 		if isParam {
 			logger.Println("Bot "+esn+" Parameters Sent:", intentParams)
@@ -89,7 +98,9 @@ func IntentPass(req interface{}, intentThing string, speechText string, intentPa
 		r := &vtt.IntentGraphResponse{
 			Intent: &intentGraphSend,
 		}
-		productivity.NotifyConfirmationIntent(esn, intentThing)
+		if !confirmationConsumed {
+			productivity.NotifyConfirmationIntent(esn, intentThing)
+		}
 		logger.Println("Bot " + esn + " Intent Sent: " + intentThing)
 		if isParam {
 			logger.Println("Bot "+esn+" Parameters Sent:", intentParams)
