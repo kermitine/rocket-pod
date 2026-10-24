@@ -221,6 +221,9 @@ func SetupBotViaSSH(ip string, key []byte) error {
 
 func SSHSetup(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api-ssh/repair_voice" || r.URL.Path == "/api-ssh/voice_repair_status" || r.URL.Path == "/api-ssh/check_voice":
+		voiceRepairAPI(w, r)
+		return
 	case r.URL.Path == "/api-ssh/setup":
 		ip := r.FormValue("ip")
 		if ip == "" {

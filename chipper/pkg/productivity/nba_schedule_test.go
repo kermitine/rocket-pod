@@ -148,6 +148,50 @@ func TestNBAGamesTodayEmptyResponses(t *testing.T) {
 	}
 }
 
+func TestNBAGamesTodayHandlesESPNMinutePrecisionDenverAndPhiladelphia(t *testing.T) {
+	// Preserve ESPN's timestamp format and home-first competitor order, rather
+	// than formatting dates through testNBAGame (which adds seconds).
+	var scoreboard nbaScoreboard
+	err := json.Unmarshal([]byte(`{"events":[
+		{"id":"denver","date":"2026-10-25T01:00Z","status":{"type":{"state":"pre"}},"competitions":[{"competitors":[
+			{"homeAway":"home","team":{"abbreviation":"DEN","displayName":"Denver Nuggets"}},
+			{"homeAway":"away","team":{"abbreviation":"NO","displayName":"New Orleans Pelicans"}}
+		]}]},
+		{"id":"philadelphia","date":"2026-10-24T23:30Z","status":{"type":{"state":"pre"}},"competitions":[{"competitors":[
+			{"homeAway":"home","team":{"abbreviation":"PHI","displayName":"Philadelphia 76ers"}},
+			{"homeAway":"away","team":{"abbreviation":"MIL","displayName":"Milwaukee Bucks"}}
+		]}]}
+	]}`), &scoreboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mockNBASchedule(t, scoreboard.Events)
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 24, 10, 0, 0, 0, location)
+	pages, err := fetchNBAGamesTodayPages(context.Background(), now, []string{"DEN", "LAC", "LAL", "NY", "PHI", "TOR"})
+	if err != nil || len(pages) != 2 {
+		t.Fatalf("got %d pages, %v; want Philadelphia and Denver", len(pages), err)
+	}
+	if !strings.Contains(pages[0].Speech, "Philadelphia 76ers") || !strings.Contains(pages[0].Speech, "4:30 PM PDT") {
+		t.Fatalf("Philadelphia schedule: %s", pages[0].Speech)
+	}
+	if !strings.Contains(pages[1].Speech, "Denver Nuggets") || !strings.Contains(pages[1].Speech, "6:00 PM PDT") {
+		t.Fatalf("Denver schedule: %s", pages[1].Speech)
+	}
+}
+
+func TestNBAGamesTodayDoesNotReportNoGamesForUnreadableFavoriteDates(t *testing.T) {
+	game := testNBAGame("bad-date", "pre", time.Now(), "0", "0")
+	game.Date = "unreadable"
+	mockNBASchedule(t, []nbaEvent{game})
+	if _, err := fetchNBAGamesTodayPages(context.Background(), time.Now(), []string{"LAL"}); err == nil {
+		t.Fatal("an unreadable date was silently reported as no games")
+	}
+}
+
 func TestNBAGamesTodayPostponedAndCanceled(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	for _, status := range []string{"postponed", "canceled"} {

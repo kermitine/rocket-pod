@@ -81,6 +81,7 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 	// overlaps the user's calendar day, then filter by the user's timezone.
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	end := start.AddDate(0, 0, 1)
+	logger.Println(fmt.Sprintf("NBA schedule: checking %s in %s for %s", start.Format("2006-01-02"), now.Location(), strings.Join(NormalizeNBATeams(favoriteTeams), ", ")))
 	eastern, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		return nil, err
@@ -88,6 +89,7 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 	first, last := start.In(eastern), end.Add(-time.Nanosecond).In(eastern)
 	date := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, eastern)
 	var games []nbaEvent
+	invalidDates := false
 	seen := make(map[string]bool)
 	for ; date.Format("20060102") <= last.Format("20060102"); date = date.AddDate(0, 0, 1) {
 		scoreboard, err := fetchNBAScoreboardDate(ctx, date.Format("20060102"))
@@ -98,8 +100,12 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 			if !gameIncludesFavorite(game, favorites) || (game.ID != "" && seen[game.ID]) {
 				continue
 			}
-			tipoff, err := time.Parse(time.RFC3339, game.Date)
-			if err != nil || tipoff.Before(start) || !tipoff.Before(end) {
+			tipoff, err := parseNBAGameTime(game.Date)
+			if err != nil {
+				invalidDates = true
+				continue
+			}
+			if tipoff.Before(start) || !tipoff.Before(end) {
 				continue
 			}
 			seen[game.ID] = true
@@ -107,17 +113,20 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 		}
 	}
 	if len(games) == 0 {
+		if invalidDates {
+			return nil, fmt.Errorf("NBA schedule returned unreadable start times for favorite teams")
+		}
 		return nbaScheduleMessagePages("NO GAMES TODAY", "None of your favorite NBA teams have a game today."), nil
 	}
 	sort.SliceStable(games, func(i, j int) bool {
-		left, _ := time.Parse(time.RFC3339, games[i].Date)
-		right, _ := time.Parse(time.RFC3339, games[j].Date)
+		left, _ := parseNBAGameTime(games[i].Date)
+		right, _ := parseNBAGameTime(games[j].Date)
 		return left.Before(right)
 	})
 	pages := make([]TaskPage, 0, len(games))
 	for index, game := range games {
 		away, home, _ := nbaGameTeams(game)
-		tipoff, _ := time.Parse(time.RFC3339, game.Date)
+		tipoff, _ := parseNBAGameTime(game.Date)
 		clock := tipoff.In(now.Location()).Format("3:04 PM MST")
 		label, verb, scores := "TODAY", "play", false
 		switch strings.ToLower(game.Status.Type.State) {

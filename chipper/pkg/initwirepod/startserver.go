@@ -22,6 +22,7 @@ import (
 	wpweb "github.com/kercre123/wire-pod/chipper/pkg/wirepod/config-ws"
 	wp "github.com/kercre123/wire-pod/chipper/pkg/wirepod/preqs"
 	sdkWeb "github.com/kercre123/wire-pod/chipper/pkg/wirepod/sdkapp"
+	botsetup "github.com/kercre123/wire-pod/chipper/pkg/wirepod/setup"
 	"github.com/soheilhy/cmux"
 
 	//	grpclog "github.com/digital-dream-labs/hugh/grpc/interceptors/logger"
@@ -143,38 +144,8 @@ func StartChipper() {
 	if vars.APIConfig.Server.EPConfig && runtime.GOOS != "android" {
 		go mdnshandler.PostmDNS()
 	}
-	var certPub []byte
-	var certPriv []byte
-	if runtime.GOOS == "android" || runtime.GOOS == "ios" {
-		if vars.APIConfig.Server.EPConfig {
-			certPub, _ = os.ReadFile(vars.AndroidPath + "/static/epod/ep.crt")
-			certPriv, _ = os.ReadFile(vars.AndroidPath + "/static/epod/ep.key")
-		} else {
-			var err error
-			certPub, _ = os.ReadFile(vars.AndroidPath + "/wire-pod/certs/cert.crt")
-			certPriv, err = os.ReadFile(vars.AndroidPath + "/wire-pod/certs/cert.key")
-			if err != nil {
-				logger.Println("Rocket Pod is not setup.")
-				return
-			}
-		}
-	} else {
-		if vars.APIConfig.Server.EPConfig {
-			certPub, _ = os.ReadFile("./epod/ep.crt")
-			certPriv, _ = os.ReadFile("./epod/ep.key")
-		} else {
-			var err error
-			certPub, _ = os.ReadFile("../certs/cert.crt")
-			certPriv, err = os.ReadFile("../certs/cert.key")
-			if err != nil {
-				logger.Println("Rocket Pod is not setup.")
-				return
-			}
-		}
-	}
-
 	logger.Println("Initiating TLS listener, cmux, gRPC handler, and REST handler")
-	cert, err := tls.X509KeyPair(certPub, certPriv)
+	_, err := botsetup.LoadVoiceTLSCertificate()
 	if err != nil {
 		logger.Println(err)
 		os.Exit(1)
@@ -184,8 +155,8 @@ func StartChipper() {
 	} else {
 		logger.Println("Starting chipper server at port " + vars.APIConfig.Server.Port)
 		listenerOne, err = tls.Listen("tcp", ":"+vars.APIConfig.Server.Port, &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			CipherSuites: nil,
+			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return botsetup.LoadVoiceTLSCertificate() },
+			CipherSuites:   nil,
 		})
 		if err != nil {
 			fmt.Println(err)
@@ -201,8 +172,8 @@ func StartChipper() {
 	if vars.APIConfig.Server.EPConfig && os.Getenv("NO8084") != "true" {
 		logger.Println("Starting chipper server at port 8084 for 2.0.1 compatibility")
 		listenerTwo, err = tls.Listen("tcp", ":8084", &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			CipherSuites: nil,
+			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return botsetup.LoadVoiceTLSCertificate() },
+			CipherSuites:   nil,
 		})
 		if err != nil {
 			fmt.Println(err)

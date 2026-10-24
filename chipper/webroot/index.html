@@ -120,6 +120,25 @@
       </div>
 
       <div id="section-botauth" style="display: none">
+		<div class="reminder-block" style="text-align:left; padding:20px;">
+		  <h2>Voice connection</h2>
+		  <p>If Vector shows a cloud with an X but test notifications work, check his voice connection here. Repair updates his saved Rocket Pod address and certificate and reconnects him.</p>
+		  <label for="voiceRepairRobot">Vector</label><br />
+		  <select id="voiceRepairRobot" class="tinput" onchange="updateVoiceRepairRobotIP()"></select><br />
+		  <label for="voiceRepairRobotIP">Vector IP (SSH destination)</label><br />
+		  <input id="voiceRepairRobotIP" class="tinput" type="text" placeholder="For example, 192.168.1.241" /><br />
+		  <div id="voiceRepairIPField">
+		    <label for="voiceRepairServerIP">New Rocket Pod server IP (certificate)</label><br />
+		    <input id="voiceRepairServerIP" class="tinput" type="text" placeholder="For example, 192.168.1.100" /><br />
+		  </div>
+		  <label for="voiceRepairKey">Vector&rsquo;s SSH key (for repair)</label><br />
+		  <input id="voiceRepairKey" type="file" /><br />
+		  <small class="desc">For OSKR/dev-unlocked robots. The key is used for this repair only. Current connection files are backed up.</small>
+		  <button id="voiceCheckButton" type="button" onclick="checkVoiceConnection()">Check voice connection</button>
+		  <button id="voiceRepairButton" type="button" onclick="repairVoiceConnection()">Repair voice connection</button>
+		  <div id="voiceRepairStatus" role="status" aria-live="polite"></div>
+		</div>
+		<hr />
         <h2>Authentication</h2>
         <hr class="small-hr">
         <div>

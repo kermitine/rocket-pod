@@ -28,6 +28,8 @@ type ClientServerConfig struct {
 
 // creates and exports a priv/pub key combo generated with IP address
 func CreateCertCombo() error {
+	voiceCertificateMu.Lock()
+	defer voiceCertificateMu.Unlock()
 	// get preferred IP address of machine
 	ipAddr := vars.GetOutboundIP()
 

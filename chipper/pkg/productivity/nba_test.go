@@ -34,6 +34,34 @@ func TestNBAPregameNotification(t *testing.T) {
 	}
 }
 
+func TestParseNBAGameTimeSupportsESPNFormats(t *testing.T) {
+	want := time.Date(2026, 10, 24, 23, 30, 0, 0, time.UTC)
+	for _, value := range []string{"2026-10-24T23:30Z", "2026-10-24T23:30:00Z", "2026-10-24T16:30-07:00", "2026-10-24T16:30:00-07:00"} {
+		got, err := parseNBAGameTime(value)
+		if err != nil || !got.Equal(want) {
+			t.Errorf("parseNBAGameTime(%q)=%v, %v; want %v", value, got, err, want)
+		}
+	}
+	if _, err := parseNBAGameTime("not a date"); err == nil {
+		t.Fatal("accepted an invalid NBA time")
+	}
+}
+
+func TestNBAPregameNotificationAndFaceAcceptMinutePrecision(t *testing.T) {
+	resetNBANotificationState()
+	t.Cleanup(resetNBANotificationState)
+	now := time.Date(2026, 10, 24, 23, 20, 0, 0, time.UTC)
+	game := testNBAGame("minute-time", "pre", now.Add(10*time.Minute), "0", "0")
+	game.Date = "2026-10-24T23:30Z"
+	kind, _, notify := nbaNotificationForGame(game, vars.NBAConfig{PregameMinutes: 15}, now)
+	if !notify || kind != "pregame" {
+		t.Fatal("ESPN's minute-precision time suppressed a pregame reminder")
+	}
+	if got := nbaFaceStatus(game, time.UTC); got != "11:30 PM" {
+		t.Fatalf("pregame start time on face=%q", got)
+	}
+}
+
 func TestNBALiveNotificationInterval(t *testing.T) {
 	resetNBANotificationState()
 	now := time.Date(2026, time.January, 2, 1, 0, 0, 0, time.UTC)

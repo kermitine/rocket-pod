@@ -573,7 +573,7 @@ func fetchLatestCompletedNBAGame(ctx context.Context, team string, now time.Time
 			if len(event.Competitions) == 0 || !strings.EqualFold(event.Competitions[0].Status.Type.State, "post") {
 				continue
 			}
-			date, err := time.Parse(time.RFC3339, event.Date)
+			date, err := parseNBAGameTime(event.Date)
 			if err == nil && !date.After(now) && (latestID == "" || date.After(latestDate)) {
 				latestID, latestDate = event.ID, date
 			}
@@ -754,7 +754,7 @@ func nbaNotificationForGame(game nbaEvent, config vars.NBAConfig, now time.Time)
 	}
 	switch state {
 	case "pre":
-		start, err := time.Parse(time.RFC3339, game.Date)
+		start, err := parseNBAGameTime(game.Date)
 		if err != nil {
 			return "", "", false
 		}
@@ -1019,7 +1019,7 @@ func drawCenteredText(dst draw.Image, text string, centerX, baselineY int, textC
 func nbaFaceStatus(game nbaEvent, location *time.Location) string {
 	switch strings.ToLower(game.Status.Type.State) {
 	case "pre":
-		if start, err := time.Parse(time.RFC3339, game.Date); err == nil {
+		if start, err := parseNBAGameTime(game.Date); err == nil {
 			return start.In(location).Format("3:04 PM")
 		}
 	case "post":
@@ -1029,6 +1029,14 @@ func nbaFaceStatus(game nbaEvent, location *time.Location) string {
 		return strings.ToUpper(detail)
 	}
 	return strings.ToUpper(game.Status.Type.Detail)
+}
+
+// ESPN emits both full RFC3339 timestamps and minute-precision timestamps.
+func parseNBAGameTime(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse("2006-01-02T15:04Z07:00", value)
 }
 
 func scoreOrZero(score string) string {
