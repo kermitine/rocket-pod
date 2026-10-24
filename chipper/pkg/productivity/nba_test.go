@@ -178,17 +178,59 @@ func TestSpokenNBAGameDetail(t *testing.T) {
 		detail string
 		want   string
 	}{
-		{detail: "4:39 - 3rd", want: "4 minutes 39 seconds left in the third quarter"},
-		{detail: "1:01 - 1st", want: "1 minute 1 second left in the first quarter"},
-		{detail: "0:08 - 4th", want: "8 seconds left in the fourth quarter"},
+		{detail: "7:20 - 1st", want: "7 minutes left in the 1st"},
+		{detail: "7:29 - 1st", want: "7 minutes left in the 1st"},
+		{detail: "7:30 - 1st", want: "8 minutes left in the 1st"},
+		{detail: "7:59 - 1st", want: "8 minutes left in the 1st"},
+		{detail: "4:39 - 3rd", want: "5 minutes left in the 3rd"},
+		{detail: "2:00 - 2nd", want: "2 minutes left in the 2nd"},
+		{detail: "1:01 - 1st", want: "1 minute left in the 1st"},
+		{detail: "0:08 - 4th", want: "less than a minute left in the 4th"},
+		{detail: "0:29 - 4th", want: "less than a minute left in the 4th"},
+		{detail: "0:30 - 4th", want: "1 minute left in the 4th"},
+		{detail: "0:00 - 4th", want: "no time left in the 4th"},
 		{detail: "2:00 - OT", want: "2 minutes left in overtime"},
-		{detail: "1:05 - 2OT", want: "1 minute 5 seconds left in overtime"},
+		{detail: "1:05 - 2OT", want: "1 minute left in overtime"},
 		{detail: "Halftime", want: "Halftime"},
 	}
 	for _, tt := range tests {
 		if got := spokenNBAGameDetail(tt.detail); got != tt.want {
 			t.Errorf("spokenNBAGameDetail(%q) = %q, want %q", tt.detail, got, tt.want)
 		}
+	}
+}
+
+func TestNBANotificationsShareShortClockSpeech(t *testing.T) {
+	for _, test := range []struct {
+		name, clock, homeScore, want string
+	}{
+		{"live", "7:20 - 1st", "99", "7 minutes left in the 1st"},
+		{"lead change", "7:20 - 4th", "101", "7 minutes left in the 4th"},
+		{"tie", "7:20 - 4th", "100", "7 minutes left in the 4th"},
+		{"close game", "1:20 - 4th", "98", "1 minute left in the 4th"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resetNBANotificationState()
+			t.Cleanup(resetNBANotificationState)
+			now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
+			game := testNBAGame("short-clock", "in", now, "100", "95")
+			game.Status.Type.ShortDetail = "3:00 - 4th"
+			config := vars.NBAConfig{LiveUpdateMinutes: 30, NotifyNotable: true}
+			if test.name != "live" {
+				kind, _, _ := nbaNotificationForGame(game, config, now)
+				markNBANotified(game.ID, kind, now)
+			}
+			game.Status.Type.ShortDetail = test.clock
+			game.Competitions[0].Competitors[1].Score = test.homeScore
+			kind, phrase, notify := nbaNotificationForGame(game, config, now.Add(time.Minute))
+			wantKind := "notable"
+			if test.name == "live" {
+				wantKind = "live"
+			}
+			if !notify || kind != wantKind || !strings.Contains(phrase, test.want) {
+				t.Fatalf("notification = (%s, %q, %v), want %s with %q", kind, phrase, notify, wantKind, test.want)
+			}
+		})
 	}
 }
 

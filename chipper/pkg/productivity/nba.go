@@ -1060,28 +1060,26 @@ func spokenNBAGameDetail(detail string) string {
 	}
 	minutes, _ := strconv.Atoi(match[1])
 	seconds, _ := strconv.Atoi(match[2])
-	timeParts := make([]string, 0, 2)
-	if minutes > 0 {
-		timeParts = append(timeParts, fmt.Sprintf("%d %s", minutes, pluralize(minutes, "minute", "minutes")))
-	}
-	if seconds > 0 {
-		timeParts = append(timeParts, fmt.Sprintf("%d %s", seconds, pluralize(seconds, "second", "seconds")))
-	}
-	if len(timeParts) == 0 {
-		timeParts = append(timeParts, "no time")
+	remainingSeconds := minutes*60 + seconds
+	roundedMinutes := (remainingSeconds + 30) / 60
+	clock := "no time"
+	if roundedMinutes > 0 {
+		clock = fmt.Sprintf("%d %s", roundedMinutes, pluralize(roundedMinutes, "minute", "minutes"))
+	} else if remainingSeconds > 0 {
+		clock = "less than a minute"
 	}
 	periodName := strings.ToLower(match[3])
 	if strings.HasSuffix(periodName, "ot") {
 		periodName = "ot"
 	}
 	period := map[string]string{
-		"1st": "the first quarter",
-		"2nd": "the second quarter",
-		"3rd": "the third quarter",
-		"4th": "the fourth quarter",
+		"1st": "the 1st",
+		"2nd": "the 2nd",
+		"3rd": "the 3rd",
+		"4th": "the 4th",
 		"ot":  "overtime",
 	}[periodName]
-	return strings.Join(timeParts, " ") + " left in " + period
+	return clock + " left in " + period
 }
 
 func pluralize(value int, singular, plural string) string {
