@@ -45,7 +45,7 @@ var nbaTeamNames = map[string]string{
 	"TOR": "Toronto Raptors", "UTAH": "Utah Jazz", "WSH": "Washington Wizards",
 }
 
-var nbaSpokenClockPattern = regexp.MustCompile(`(?i)^\s*(\d+):(\d{2})\s*-\s*(1st|2nd|3rd|4th|OT)\b`)
+var nbaSpokenClockPattern = regexp.MustCompile(`(?i)^\s*(\d+):(\d{2})\s*-\s*(1st|2nd|3rd|4th|\d*OT)\b`)
 
 type nbaScoreboard struct {
 	Events []nbaEvent `json:"events"`
@@ -811,7 +811,9 @@ func nbaNotableMoment(game nbaEvent, away, home nbaCompetitor) (string, bool) {
 		ClutchNotified: previous.ClutchNotified || clutch,
 	}
 	nbaNotableSnapshots[game.ID] = snapshot
-	if !seen {
+	// Track earlier quarters, but reserve extra interruptions for late games.
+	period, _, clockKnown := nbaClockDetail(detail)
+	if !seen || !clockKnown || (period != "4th" && period != "ot") {
 		return "", false
 	}
 	if previous.Leader != "" && previous.Leader != leader {
@@ -859,7 +861,11 @@ func nbaClockDetail(detail string) (string, int, bool) {
 	}
 	minutes, _ := strconv.Atoi(match[1])
 	seconds, _ := strconv.Atoi(match[2])
-	return strings.ToLower(match[3]), minutes*60 + seconds, true
+	period := strings.ToLower(match[3])
+	if strings.HasSuffix(period, "ot") {
+		period = "ot"
+	}
+	return period, minutes*60 + seconds, true
 }
 
 func markNBANotified(gameID, kind string, now time.Time) {
@@ -1064,13 +1070,17 @@ func spokenNBAGameDetail(detail string) string {
 	if len(timeParts) == 0 {
 		timeParts = append(timeParts, "no time")
 	}
+	periodName := strings.ToLower(match[3])
+	if strings.HasSuffix(periodName, "ot") {
+		periodName = "ot"
+	}
 	period := map[string]string{
 		"1st": "the first quarter",
 		"2nd": "the second quarter",
 		"3rd": "the third quarter",
 		"4th": "the fourth quarter",
 		"ot":  "overtime",
-	}[strings.ToLower(match[3])]
+	}[periodName]
 	return strings.Join(timeParts, " ") + " left in " + period
 }
 
