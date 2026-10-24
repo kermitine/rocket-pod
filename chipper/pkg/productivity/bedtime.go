@@ -88,7 +88,7 @@ func isBedtimeForRobot(esn string, now time.Time) bool {
 
 func taskSuppressedAtBedtime(task Task, now time.Time) bool {
 	// Explicit requests remain available when the user interacts with Vector.
-	return task.Source != "standings" && task.Source != "test" && isBedtimeForRobot(task.RobotESN, now)
+	return task.Source != "standings" && task.Source != nbaGamesTodaySource && task.Source != "test" && isBedtimeForRobot(task.RobotESN, now)
 }
 
 func cancelTaskAtBedtime(ctx context.Context, cancel context.CancelFunc, task Task) {

@@ -891,12 +891,19 @@ func nbaGameTeams(game nbaEvent) (nbaCompetitor, nbaCompetitor, bool) {
 }
 
 func renderNBAScoreFace(ctx context.Context, game nbaEvent, location *time.Location) ([]byte, error) {
+	return renderNBAGameFace(ctx, game, "", nbaFaceStatus(game, location), true)
+}
+
+func renderNBAGameFace(ctx context.Context, game nbaEvent, title, status string, showScores bool) ([]byte, error) {
 	away, home, ok := nbaGameTeams(game)
 	if !ok {
 		return nil, fmt.Errorf("game has no home/away competitors")
 	}
 	canvas := image.NewNRGBA(image.Rect(0, 0, 184, 96))
 	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.Black), image.Point{}, draw.Src)
+	if title != "" {
+		drawCenteredText(canvas, title, 92, 11, color.RGBA{100, 220, 255, 255})
+	}
 
 	awayLogo, _ := loadNBALogo(ctx, away.Team.Logo)
 	homeLogo, _ := loadNBALogo(ctx, home.Team.Logo)
@@ -909,10 +916,14 @@ func renderNBAScoreFace(ctx context.Context, game nbaEvent, location *time.Locat
 
 	drawCenteredText(canvas, strings.ToUpper(away.Team.Abbreviation), 27, 75, color.White)
 	drawCenteredText(canvas, strings.ToUpper(home.Team.Abbreviation), 157, 75, color.White)
-	drawCenteredText(canvas, scoreOrZero(away.Score), 72, 50, color.White)
-	drawCenteredText(canvas, "-", 92, 50, color.RGBA{180, 180, 180, 255})
-	drawCenteredText(canvas, scoreOrZero(home.Score), 112, 50, color.White)
-	drawCenteredText(canvas, nbaFaceStatus(game, location), 92, 88, color.RGBA{100, 220, 255, 255})
+	if showScores {
+		drawCenteredText(canvas, scoreOrZero(away.Score), 72, 50, color.White)
+		drawCenteredText(canvas, "-", 92, 50, color.RGBA{180, 180, 180, 255})
+		drawCenteredText(canvas, scoreOrZero(home.Score), 112, 50, color.White)
+	} else {
+		drawCenteredText(canvas, "VS", 92, 50, color.White)
+	}
+	drawCenteredText(canvas, status, 92, 88, color.RGBA{100, 220, 255, 255})
 	return convertImageToVectorFaceData(canvas), nil
 }
 

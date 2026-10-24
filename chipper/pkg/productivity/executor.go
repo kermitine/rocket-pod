@@ -312,7 +312,7 @@ func processTask(task Task) {
 		logger.Println("Productivity: Skipping automatic notification during bedtime")
 		return
 	}
-	if task.Source == "standings" || task.Source == "test" {
+	if task.Source == "standings" || task.Source == nbaGamesTodaySource || task.Source == "test" {
 		endInteraction := BeginBedtimeInteraction(task.RobotESN)
 		defer endInteraction()
 	}

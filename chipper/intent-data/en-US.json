@@ -1,5 +1,10 @@
 [
 	{
+		"name": "intent_sports_nba_games_today",
+		"keyphrases": ["NBA games today", "NBA games tonight", "NBA schedule today", "basketball games today", "who is playing in the NBA today"],
+		"requiresexact": false
+	},
+	{
 		"name": "intent_sports_nba_east_standings",
 		"keyphrases": ["NBA eastern conference standings", "eastern conference standings", "eastern standings", "east standings"],
 		"requiresexact": false

@@ -272,6 +272,18 @@ func ProcessTextAll(req interface{}, voiceText string, intents []vars.JsonIntent
 	var intentNum int = 0
 	var successMatched bool = false
 	voiceText = strings.ToLower(voiceText)
+	if productivity.MatchNBAGamesTodayVoiceCommand(voiceText) {
+		switch req.(type) {
+		case *vtt.IntentRequest, *vtt.IntentGraphRequest:
+			if _, err := IntentPass(req, productivity.NBAGamesTodayIntent, voiceText, map[string]string{}, false); err != nil {
+				logger.Println("Unable to finish NBA schedule voice intent: " + err.Error())
+			}
+		}
+		if err := productivity.QueueVoiceNBAGamesToday(botSerial); err != nil {
+			logger.Println("Unable to queue NBA schedule voice command: " + err.Error())
+		}
+		return true
+	}
 	if standingsKind, ok := productivity.MatchStandingsVoiceCommand(voiceText); ok {
 		switch req.(type) {
 		case *vtt.IntentRequest, *vtt.IntentGraphRequest:

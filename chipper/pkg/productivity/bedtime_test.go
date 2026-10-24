@@ -78,9 +78,9 @@ func TestBedtimeSuppressesOnlyAutomaticTasksForSelectedRobot(t *testing.T) {
 		Schedule: vars.BedtimeConfig{Enable: true, Start: "21:00", End: "07:00", Timezone: "UTC"},
 	})
 	night := time.Date(2026, 6, 22, 23, 0, 0, 0, time.UTC)
-	for _, source := range []string{"manual", "nba", "f1", "todoist", "standings", "test"} {
+	for _, source := range []string{"manual", "nba", "f1", "todoist", "standings", nbaGamesTodaySource, "test"} {
 		task := Task{RobotESN: "bedtime-robot", Source: source}
-		want := source != "standings" && source != "test"
+		want := source != "standings" && source != nbaGamesTodaySource && source != "test"
 		if got := taskSuppressedAtBedtime(task, night); got != want {
 			t.Errorf("source %s suppressed = %v, want %v", source, got, want)
 		}
