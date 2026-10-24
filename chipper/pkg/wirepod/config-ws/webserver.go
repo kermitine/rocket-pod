@@ -761,7 +761,7 @@ func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "language not valid", http.StatusBadRequest)
 			return
 		}
-		if !isDownloadedLanguage(request.Language, vars.DownloadedVoskModels) {
+		if !localization.VoskModelExists(request.Language) {
 			go localization.DownloadVoskModel(request.Language)
 			fmt.Fprint(w, "downloading language model...")
 			return
@@ -785,10 +785,7 @@ func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
 
 func handleGetDownloadStatus(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(localization.DownloadStatus))
-	if localization.DownloadStatus == "success" || strings.Contains(localization.DownloadStatus, "error") {
-		localization.DownloadStatus = "not downloading"
-	}
+	w.Write([]byte(localization.PollDownloadStatus()))
 }
 
 func handleGetSTTInfo(w http.ResponseWriter) {
@@ -1035,15 +1032,6 @@ func anyEmpty(values ...string) bool {
 
 func isValidLanguage(language string, validLanguages []string) bool {
 	for _, lang := range validLanguages {
-		if lang == language {
-			return true
-		}
-	}
-	return false
-}
-
-func isDownloadedLanguage(language string, downloadedLanguages []string) bool {
-	for _, lang := range downloadedLanguages {
 		if lang == language {
 			return true
 		}

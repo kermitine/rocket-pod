@@ -1,192 +1,274 @@
 package localization
 
-/**
- * @website http://albulescu.ro
- * @author Cosmin Albulescu <cosmin@albulescu.ro>
- */
-// modified from this person's gist ^^^
-
 import (
 	"archive/zip"
-	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 )
 
-var URLPrefix string = "https://github.com/kercre123/vosk-models/raw/main/"
+var URLPrefix = "https://github.com/kercre123/vosk-models/raw/main/"
 
-//var URLPrefix string = "https://alphacephei.com/vosk/models/"
+var voskModelArchives = map[string]string{
+	"en-US": "vosk-model-small-en-us-0.15.zip",
+	"it-IT": "vosk-model-small-it-0.22.zip",
+	"es-ES": "vosk-model-small-es-0.42.zip",
+	"fr-FR": "vosk-model-small-fr-0.22.zip",
+	"de-DE": "vosk-model-small-de-0.15.zip",
+	"pt-BR": "vosk-model-small-pt-0.3.zip",
+	"pl-PL": "vosk-model-small-pl-0.22.zip",
+	"zh-CN": "vosk-model-small-cn-0.22.zip",
+	"tr-TR": "vosk-model-small-tr-0.3.zip",
+	"ru-RU": "vosk-model-small-ru-0.22.zip",
+	"nt-NL": "vosk-model-small-nl-0.22.zip",
+	"uk-UA": "vosk-model-small-uk-v3-small.zip",
+	"vi-VN": "vosk-model-small-vn-0.4.zip",
+	"ko-KR": "vosk-model-small-ko-0.22.zip",
+}
 
-var DownloadStatus string = "not downloading"
+var modelDownloadClient = &http.Client{Timeout: 10 * time.Minute}
+var modelInstallMu sync.Mutex
+var modelSelectionMu sync.Mutex
+var modelDownloadStatus = struct {
+	sync.Mutex
+	message string
+}{message: "not downloading"}
+
+func setModelDownloadStatus(message string) {
+	modelDownloadStatus.Lock()
+	modelDownloadStatus.message = message
+	modelDownloadStatus.Unlock()
+}
+
+// PollDownloadStatus consumes terminal statuses, matching the web UI's polling protocol.
+func PollDownloadStatus() string {
+	modelDownloadStatus.Lock()
+	defer modelDownloadStatus.Unlock()
+	status := modelDownloadStatus.message
+	if status == "success" || strings.HasPrefix(status, "error:") {
+		modelDownloadStatus.message = "not downloading"
+	}
+	return status
+}
+
+func voskModelFilesExist(path string) bool {
+	nonemptyFile := func(name string) bool {
+		info, err := os.Stat(filepath.Join(path, name))
+		return err == nil && info.Mode().IsRegular() && info.Size() > 0
+	}
+	// Vosk supports both current and legacy model layouts.
+	return (nonemptyFile("am/final.mdl") && nonemptyFile("conf/model.conf")) ||
+		(nonemptyFile("final.mdl") && nonemptyFile("mfcc.conf"))
+}
+
+func VoskModelExists(language string) bool {
+	if _, supported := voskModelArchives[language]; !supported {
+		return false
+	}
+	return voskModelFilesExist(filepath.Join(vars.VoskModelPath, language, "model"))
+}
+
+// EnsureVoskModel restores missing model files without changing the selected
+// language or reloading Vosk. Startup can call it without a recursive Init.
+func EnsureVoskModel(language string) error {
+	modelInstallMu.Lock()
+	defer modelInstallMu.Unlock()
+	if err := ensureVoskModel(language); err != nil {
+		setModelDownloadStatus("error: " + err.Error())
+		logger.Println("VOSK model recovery failed: " + err.Error())
+		return err
+	}
+	vars.GetDownloadedVoskModels()
+	return nil
+}
+
+func ensureVoskModel(language string) error {
+	filename, supported := voskModelArchives[language]
+	if !supported {
+		return fmt.Errorf("unsupported Vosk model language %q", language)
+	}
+	if VoskModelExists(language) {
+		return nil
+	}
+	languagePath := filepath.Join(vars.VoskModelPath, language)
+	if err := os.MkdirAll(languagePath, 0755); err != nil {
+		return fmt.Errorf("create Vosk model directory: %w", err)
+	}
+	stagingPath, err := os.MkdirTemp(languagePath, ".download-")
+	if err != nil {
+		return fmt.Errorf("create Vosk model staging directory: %w", err)
+	}
+	cleanupStaging := true
+	defer func() {
+		if cleanupStaging {
+			os.RemoveAll(stagingPath)
+		}
+	}()
+	archivePath := filepath.Join(stagingPath, "model.zip")
+	url := URLPrefix + filename
+	logger.Println("VOSK model missing or incomplete for " + language + "; downloading " + url)
+	setModelDownloadStatus("Downloading VOSK model for " + language + "...")
+	if err := downloadModelArchive(url, archivePath); err != nil {
+		return err
+	}
+	setModelDownloadStatus("Unpacking model...")
+	if err := extractModelArchive(archivePath, stagingPath); err != nil {
+		return err
+	}
+	modelPath := filepath.Join(stagingPath, strings.TrimSuffix(filename, ".zip"))
+	if !voskModelFilesExist(modelPath) {
+		return fmt.Errorf("downloaded Vosk archive for %s does not contain model files", language)
+	}
+	// Stage and validate the download before replacing an incomplete model.
+	destination := filepath.Join(languagePath, "model")
+	backup := filepath.Join(stagingPath, "previous-model")
+	hadPrevious := false
+	if _, err := os.Lstat(destination); err == nil {
+		if err := os.Rename(destination, backup); err != nil {
+			return fmt.Errorf("move incomplete Vosk model aside: %w", err)
+		}
+		hadPrevious = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(modelPath, destination); err != nil {
+		if hadPrevious {
+			if restoreErr := os.Rename(backup, destination); restoreErr != nil {
+				// Preserve the staging directory containing the only backup.
+				cleanupStaging = false
+				return fmt.Errorf("install Vosk model: %v; previous files remain at %s: %w", err, backup, restoreErr)
+			}
+		}
+		return fmt.Errorf("install Vosk model: %w", err)
+	}
+	logger.Println("VOSK model installed for " + language + " at " + destination)
+	setModelDownloadStatus("Model ready")
+	return nil
+}
 
 func DownloadVoskModel(language string) {
-	filename := "vosk-model-small-"
-	if language == "en-US" {
-		filename = filename + "en-us-0.15.zip"
-	} else if language == "it-IT" {
-		filename = filename + "it-0.22.zip"
-	} else if language == "es-ES" {
-		filename = filename + "es-0.42.zip"
-	} else if language == "fr-FR" {
-		filename = filename + "fr-0.22.zip"
-	} else if language == "de-DE" {
-		filename = filename + "de-0.15.zip"
-	} else if language == "pt-BR" {
-		filename = filename + "pt-0.3.zip"
-	} else if language == "pl-PL" {
-		filename = filename + "pl-0.22.zip"
-	} else if language == "zh-CN" {
-		filename = filename + "cn-0.22.zip"
-	} else if language == "tr-TR" {
-		filename = filename + "tr-0.3.zip"
-	} else if language == "ru-RU" {
-		filename = filename + "ru-0.22.zip"
-	} else if language == "nt-NL" {
-		filename = filename + "nl-0.22.zip"
-	} else if language == "uk-UA" {
-		filename = filename + "uk-v3-small.zip"
-	} else if language == "vi-VN" {
-		filename = filename + "vn-0.4.zip"
-	} else if language == "ko-KR" {
-		filename = filename + "ko-0.22.zip"
-	} else {
-		logger.Println("Language not valid? " + language)
+	// Serialize language changes as well as model installs and reloads.
+	modelSelectionMu.Lock()
+	defer modelSelectionMu.Unlock()
+	if err := EnsureVoskModel(language); err != nil {
 		return
 	}
-	os.MkdirAll(vars.VoskModelPath, 0755)
-	url := URLPrefix + filename
-	var filep string
-	if runtime.GOOS == "android" || runtime.GOOS == "ios" {
-		filep = filepath.Join(vars.AndroidPath, "/"+filename)
-	} else {
-		filep = os.TempDir() + "/" + filename
-	}
-	destpath := filepath.Join(vars.VoskModelPath, language) + "/"
-	DownloadFile(url, filep)
-	UnzipFile(filep, destpath)
-	os.Rename(destpath+strings.TrimSuffix(filename, ".zip"), destpath+"model")
-	os.Remove(filep)
-	vars.DownloadedVoskModels = append(vars.DownloadedVoskModels, language)
-	DownloadStatus = "Reloading voice processor"
+	previousLanguage, previousSetup := vars.APIConfig.STT.Language, vars.APIConfig.PastInitialSetup
 	vars.APIConfig.STT.Language = language
 	vars.APIConfig.PastInitialSetup = true
-	vars.WriteConfigToDisk()
-	ReloadVosk()
-	logger.Println("Reloaded voice processor successfully")
-	DownloadStatus = "success"
-}
-
-func PrintDownloadPercent(done chan int64, path string, total int64) {
-	var stop bool = false
-	for {
-		select {
-		case <-done:
-			stop = true
-		default:
-			file, err := os.Open(path)
-			if err != nil {
-				log.Fatal(err)
-			}
-			fi, err := file.Stat()
-			if err != nil {
-				log.Fatal(err)
-			}
-			size := fi.Size()
-			if size == 0 {
-				size = 1
-			}
-			var percent float64 = float64(size) / float64(total) * 100
-			showPercent := math.Floor(percent)
-			DownloadStatus = "Model download status: " + fmt.Sprint(showPercent) + "%"
-		}
-		if stop {
-			DownloadStatus = "completed"
-			break
-		}
-		time.Sleep(time.Second / 2)
-	}
-}
-
-func DownloadFile(url string, dest string) {
-	if strings.Contains(DownloadStatus, "success") || strings.Contains(DownloadStatus, "error") || strings.Contains(DownloadStatus, "not downloading") {
-		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		logger.Println("Downloading " + url + " to " + dest)
-		out, _ := os.Create(dest)
-		defer out.Close()
-		headResp, err := http.Head(url)
-		if err != nil {
-			logger.Println(err)
-			DownloadStatus = "error: " + err.Error()
-			return
-		}
-		defer headResp.Body.Close()
-		size, _ := strconv.Atoi(headResp.Header.Get("Content-Length"))
-		done := make(chan int64)
-		go PrintDownloadPercent(done, dest, int64(size))
-		resp, err := http.Get(url)
-		if err != nil {
-			DownloadStatus = "error: " + err.Error()
-			logger.Println(err)
-			return
-		}
-		defer resp.Body.Close()
-		n, _ := io.Copy(out, resp.Body)
-		done <- n
-		DownloadStatus = "Completed download"
-	} else {
-		logger.Println("Not downloading model because download is currently happening")
-	}
-}
-
-func UnzipFile(file, dest string) {
-	zipReader, err := zip.OpenReader(file)
-	if err != nil {
-		DownloadStatus = "error downloading: " + err.Error()
-		logger.Println("error opening zip file:", err)
+	if err := vars.WriteConfigToDiskWithError(); err != nil {
+		vars.APIConfig.STT.Language, vars.APIConfig.PastInitialSetup = previousLanguage, previousSetup
+		setModelDownloadStatus("error: " + err.Error())
 		return
 	}
-	defer zipReader.Close()
-	DownloadStatus = "Unpacking model..."
+	setModelDownloadStatus("Reloading voice processor")
+	vars.IntentList, _ = vars.LoadIntents()
+	if vars.SttInitFunc == nil {
+		setModelDownloadStatus("error: voice processor is not initialized; restart Rocket Pod")
+		return
+	}
+	if err := vars.SttInitFunc(); err != nil {
+		setModelDownloadStatus("error: unable to reload voice processor: " + err.Error())
+		return
+	}
+	logger.Println("Reloaded voice processor successfully")
+	setModelDownloadStatus("success")
+}
 
-	for _, f := range zipReader.File {
-		rc, err := f.Open()
-		if err != nil {
-			DownloadStatus = "error downloading: " + err.Error()
-			logger.Println("error opening zip file:", err)
-			return
-		}
-		defer rc.Close()
+type modelDownloadProgress struct {
+	bytes, total int64
+	lastUpdate   time.Time
+}
 
-		path := filepath.Join(dest, f.Name)
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, f.Mode())
+func (progress *modelDownloadProgress) Write(data []byte) (int, error) {
+	progress.bytes += int64(len(data))
+	if time.Since(progress.lastUpdate) >= time.Second {
+		if progress.total > 0 {
+			setModelDownloadStatus(fmt.Sprintf("Model download status: %d%%", progress.bytes*100/progress.total))
 		} else {
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-			if err != nil {
-				DownloadStatus = "error downloading: " + err.Error()
-				logger.Println("Error creating file:", err)
-				return
-			}
-			defer f.Close()
+			setModelDownloadStatus(fmt.Sprintf("Downloading model: %d MB", progress.bytes/(1024*1024)))
+		}
+		progress.lastUpdate = time.Now()
+	}
+	return len(data), nil
+}
 
-			_, err = io.Copy(f, rc)
-			if err != nil {
-				DownloadStatus = "error downloading: " + err.Error()
-				logger.Println("Error writing to file:", err)
-				return
+func downloadModelArchive(url, destination string) error {
+	response, err := modelDownloadClient.Get(url)
+	if err != nil {
+		return fmt.Errorf("download Vosk model: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("download Vosk model: HTTP %d from %s", response.StatusCode, url)
+	}
+	file, err := os.Create(destination)
+	if err != nil {
+		return fmt.Errorf("create Vosk download file: %w", err)
+	}
+	progress := &modelDownloadProgress{total: response.ContentLength}
+	_, copyErr := io.Copy(io.MultiWriter(file, progress), response.Body)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return fmt.Errorf("download Vosk model: %w", copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("save Vosk download: %w", closeErr)
+	}
+	return nil
+}
+
+func extractModelArchive(archive, destination string) error {
+	reader, err := zip.OpenReader(archive)
+	if err != nil {
+		return fmt.Errorf("open downloaded Vosk archive: %w", err)
+	}
+	defer reader.Close()
+	for _, entry := range reader.File {
+		path := filepath.Join(destination, entry.Name)
+		relative, err := filepath.Rel(destination, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) ||
+			filepath.IsAbs(entry.Name) || strings.Contains(entry.Name, "\\") || entry.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("invalid path in Vosk archive: %q", entry.Name)
+		}
+		if entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(path, 0755); err != nil {
+				return err
 			}
+			continue
+		}
+		if err := extractModelFile(entry, path); err != nil {
+			return fmt.Errorf("unpack Vosk model: %w", err)
 		}
 	}
+	return nil
+}
+
+func extractModelFile(entry *zip.File, destination string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return err
+	}
+	source, err := entry.Open()
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, source)
+	closeErr := output.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }

@@ -302,13 +302,16 @@ func Init() {
 }
 
 func GetDownloadedVoskModels() {
+	DownloadedVoskModels = nil
 	array, err := os.ReadDir(VoskModelPath)
 	if err != nil {
 		logger.Println(err)
 		return
 	}
 	for _, dir := range array {
-		DownloadedVoskModels = append(DownloadedVoskModels, dir.Name())
+		if info, err := os.Stat(filepath.Join(VoskModelPath, dir.Name(), "model")); dir.IsDir() && err == nil && info.IsDir() {
+			DownloadedVoskModels = append(DownloadedVoskModels, dir.Name())
+		}
 	}
 }
 

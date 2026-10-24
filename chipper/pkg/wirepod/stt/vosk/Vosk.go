@@ -13,6 +13,7 @@ import (
 	vosk "github.com/kercre123/vosk-api/go"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
+	"github.com/kercre123/wire-pod/chipper/pkg/wirepod/localization"
 	sr "github.com/kercre123/wire-pod/chipper/pkg/wirepod/speechrequest"
 )
 
@@ -41,6 +42,13 @@ func Init() error {
 		GrammerEnable = true
 	}
 	if vars.APIConfig.PastInitialSetup {
+		sttLanguage := vars.APIConfig.STT.Language
+		if len(sttLanguage) == 0 {
+			sttLanguage = "en-US"
+		}
+		if err := localization.EnsureVoskModel(sttLanguage); err != nil {
+			return fmt.Errorf("prepare Vosk model for %s: %w", sttLanguage, err)
+		}
 		vosk.SetLogLevel(-1)
 		if modelLoaded {
 			logger.Println("A model was already loaded, freeing all recognizers and model")
@@ -53,10 +61,6 @@ func Init() error {
 			gpRecs = []ARec{}
 			grmRecs = []ARec{}
 			model.Free()
-		}
-		sttLanguage := vars.APIConfig.STT.Language
-		if len(sttLanguage) == 0 {
-			sttLanguage = "en-US"
 		}
 		modelPath := filepath.Join(vars.VoskModelPath, sttLanguage, "model")
 		if _, err := os.Stat(modelPath); err != nil {
