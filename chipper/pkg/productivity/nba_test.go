@@ -194,15 +194,53 @@ func TestNBAFinalTaskPagesIncludeOrderedSpeech(t *testing.T) {
 	}
 }
 
+func TestNBACompletedGamesAreNotReplayed(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 23, 0, 0, 0, time.UTC)
+	config := vars.NBAConfig{NotifyFinal: true}
+	for restart := 0; restart < 2; restart++ {
+		resetNBANotificationState()
+		for poll := 0; poll < 2; poll++ {
+			for _, id := range []string{"old-game-1", "old-game-2"} {
+				game := testNBAGame(id, "post", now.Add(-6*time.Hour), "104", "111")
+				if kind, _, notify := nbaNotificationForGame(game, config, now.Add(time.Duration(poll)*time.Minute)); notify {
+					t.Fatalf("restart %d, poll %d: completed game %s produced %q notification", restart, poll, id, kind)
+				}
+			}
+		}
+	}
+}
+
+func TestNBAFinalNotificationAfterPregameWithoutReminder(t *testing.T) {
+	resetNBANotificationState()
+	now := time.Date(2026, time.January, 2, 1, 0, 0, 0, time.UTC)
+	game := testNBAGame("upcoming", "pre", now.Add(time.Hour), "0", "0")
+	config := vars.NBAConfig{PregameMinutes: 15, NotifyFinal: true}
+	if _, _, notify := nbaNotificationForGame(game, config, now); notify {
+		t.Fatal("pregame reminder was announced too early")
+	}
+	game.Status.Type.State = "post"
+	if kind, _, notify := nbaNotificationForGame(game, config, now.Add(4*time.Hour)); !notify || kind != "final" {
+		t.Fatalf("final notification = (%q, %v), want final for a game observed before completion", kind, notify)
+	}
+}
+
 func TestNBAFinalNotificationAndFaceRender(t *testing.T) {
 	resetNBANotificationState()
 	now := time.Date(2026, time.January, 2, 1, 0, 0, 0, time.UTC)
-	game := testNBAGame("final", "post", now, "104", "111")
+	game := testNBAGame("final", "in", now, "104", "111")
 	config := vars.NBAConfig{NotifyFinal: true}
+	if kind, _, notify := nbaNotificationForGame(game, config, now); !notify || kind != "live" {
+		t.Fatalf("live notification = (%q, %v), want live for a game in progress at startup", kind, notify)
+	}
+	game.Status.Type.State = "post"
 
 	kind, phrase, notify := nbaNotificationForGame(game, config, now)
 	if !notify || kind != "final" || !strings.Contains(phrase, "104") || !strings.Contains(phrase, "111") {
 		t.Fatalf("final notification = (%q, %q, %v)", kind, phrase, notify)
+	}
+	markNBANotified(game.ID, kind, now)
+	if _, _, notify := nbaNotificationForGame(game, config, now.Add(time.Minute)); notify {
+		t.Fatal("final notification repeated")
 	}
 	faceData, err := renderNBAScoreFace(context.Background(), game, time.UTC)
 	if err != nil {

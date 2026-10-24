@@ -92,6 +92,53 @@ func TestF1NotificationLifecycle(t *testing.T) {
 	}
 }
 
+func TestF1CompletedSessionsAreNotReplayed(t *testing.T) {
+	now := time.Date(2026, time.June, 28, 20, 0, 0, 0, time.UTC)
+	config := vars.F1Config{NotifyFinal: true}
+	for restart := 0; restart < 2; restart++ {
+		resetF1NotificationState()
+		for poll := 0; poll < 2; poll++ {
+			for _, abbreviation := range []string{"Race", "Qual", "FP1"} {
+				session := f1LiveIntervalSession(abbreviation, abbreviation)
+				session.Date = now.Add(-6 * time.Hour).Format(time.RFC3339)
+				session.Status.Type.State = "post"
+				if kind, notify := f1NotificationForSession(session, config, now.Add(time.Duration(poll)*time.Minute), true); notify {
+					t.Fatalf("restart %d, poll %d: completed %s produced %q notification", restart, poll, abbreviation, kind)
+				}
+			}
+		}
+	}
+}
+
+func TestF1FinalNotificationForMonitoredSessions(t *testing.T) {
+	now := time.Date(2026, time.June, 28, 12, 0, 0, 0, time.UTC)
+	config := vars.F1Config{PregameMinutes: 60, NotifyFinal: true}
+	for _, abbreviation := range []string{"Race", "Qual", "FP1"} {
+		for _, initialState := range []string{"pre", "in"} {
+			t.Run(abbreviation+"/"+initialState, func(t *testing.T) {
+				resetF1NotificationState()
+				session := f1LiveIntervalSession(abbreviation, abbreviation)
+				session.Date = now.Add(2 * time.Hour).Format(time.RFC3339)
+				session.Status.Type.State = initialState
+				f1NotificationForSession(session, config, now, true)
+				session.Status.Type.State = "post"
+				kind, notify := f1NotificationForSession(session, config, now.Add(4*time.Hour), true)
+				if !notify || kind != "final" {
+					t.Fatalf("final notification = (%q, %v), want final for a session observed before completion", kind, notify)
+				}
+				markF1Notified(session.ID, kind, now.Add(4*time.Hour))
+				if _, notify := f1NotificationForSession(session, config, now.Add(5*time.Hour), true); notify {
+					t.Fatal("final notification repeated")
+				}
+				resetF1NotificationState()
+				if _, notify := f1NotificationForSession(session, config, now.Add(6*time.Hour), true); notify {
+					t.Fatal("final notification replayed after restart")
+				}
+			})
+		}
+	}
+}
+
 func TestF1LiveNotificationUsesSessionIntervals(t *testing.T) {
 	resetF1NotificationState()
 	now := time.Date(2026, time.June, 28, 12, 0, 0, 0, time.UTC)
@@ -289,32 +336,6 @@ func TestF1Q2QualifyingLeaderboardIncludesTopTen(t *testing.T) {
 	speech := pages[0].Speech + " " + pages[1].Speech
 	if strings.Contains(speech, "Driver11") || strings.Contains(speech, "Driver15") {
 		t.Fatalf("Q2 speech included drivers outside the top ten: %q", speech)
-	}
-}
-
-func TestF1AllowedHours(t *testing.T) {
-	tests := []struct {
-		name       string
-		hour       int
-		minute     int
-		start, end string
-		want       bool
-	}{
-		{name: "daytime", hour: 12, start: "08:00", end: "22:00", want: true},
-		{name: "three AM quiet", hour: 3, start: "08:00", end: "22:00", want: false},
-		{name: "end exclusive", hour: 22, start: "08:00", end: "22:00", want: false},
-		{name: "overnight evening", hour: 23, start: "20:00", end: "08:00", want: true},
-		{name: "overnight morning", hour: 7, minute: 59, start: "20:00", end: "08:00", want: true},
-		{name: "same means unrestricted", hour: 3, start: "00:00", end: "00:00", want: true},
-		{name: "invalid uses defaults", hour: 3, start: "bad", end: "bad", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			now := time.Date(2026, time.June, 28, tt.hour, tt.minute, 0, 0, time.FixedZone("configured", -7*60*60))
-			if got := f1WithinAllowedHours(now, tt.start, tt.end); got != tt.want {
-				t.Fatalf("f1WithinAllowedHours(%s, %q, %q) = %v, want %v", now.Format("15:04"), tt.start, tt.end, got, tt.want)
-			}
-		})
 	}
 }
 

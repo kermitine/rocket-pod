@@ -268,10 +268,10 @@ func checkF1Races() {
 			if !notify {
 				continue
 			}
-			if !f1WithinAllowedHours(now, config.AllowedStart, config.AllowedEnd) {
+			if isBedtimeForRobot(target, now) {
 				if kind == "pregame" || kind == "final" {
 					markF1Notified(session.ID, kind, now)
-					logger.Println("Productivity: Suppressed F1 " + f1SessionName(session) + " " + kind + " update during quiet hours")
+					logger.Println("Productivity: Suppressed F1 " + f1SessionName(session) + " " + kind + " update during bedtime")
 				}
 				continue
 			}
@@ -366,6 +366,11 @@ func f1NotificationForRace(race f1Competition, config vars.F1Config, now time.Ti
 
 func f1NotificationForSession(session f1Competition, config vars.F1Config, now time.Time, notifyFinal bool) (string, bool) {
 	state := strings.ToLower(session.Status.Type.State)
+	if _, seen := f1FinalNotified[session.ID]; !seen {
+		// Skip sessions that are already complete on first observation, including
+		// after startup or a configuration reload. Unfinished sessions stay eligible.
+		f1FinalNotified[session.ID] = state == "post"
+	}
 	switch state {
 	case "pre":
 		start, err := time.Parse(time.RFC3339, session.Date)
@@ -435,37 +440,6 @@ func f1DriverSnapshotKey(driver f1Competitor) string {
 		name = strings.TrimSpace(driver.Athlete.FullName)
 	}
 	return strings.ToLower(name)
-}
-
-func f1WithinAllowedHours(now time.Time, startValue, endValue string) bool {
-	startMinutes, startOK := f1ClockMinutes(startValue)
-	endMinutes, endOK := f1ClockMinutes(endValue)
-	if !startOK {
-		startMinutes = 8 * 60
-	}
-	if !endOK {
-		endMinutes = 22 * 60
-	}
-	if startMinutes == endMinutes {
-		return true
-	}
-	currentMinutes := now.Hour()*60 + now.Minute()
-	if startMinutes < endMinutes {
-		return currentMinutes >= startMinutes && currentMinutes < endMinutes
-	}
-	return currentMinutes >= startMinutes || currentMinutes < endMinutes
-}
-
-func f1ClockMinutes(value string) (int, bool) {
-	if len(value) != 5 || value[2] != ':' {
-		return 0, false
-	}
-	hour, hourErr := strconv.Atoi(value[:2])
-	minute, minuteErr := strconv.Atoi(value[3:])
-	if hourErr != nil || minuteErr != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-		return 0, false
-	}
-	return hour*60 + minute, true
 }
 
 func markF1Notified(raceID, kind string, now time.Time) {

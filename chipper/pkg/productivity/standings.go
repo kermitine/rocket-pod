@@ -253,6 +253,8 @@ func QueueVoiceStandings(robotESN, kind string) error {
 	default:
 	}
 	go func() {
+		endInteraction := BeginBedtimeInteraction(robotESN)
+		defer endInteraction()
 		ctx, cancel := context.WithTimeout(context.Background(), standingsRequestTimeout)
 		defer cancel()
 		pages, err := fetchVoiceStandingsPages(ctx, kind)

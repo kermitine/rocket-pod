@@ -144,17 +144,25 @@ type botjdoc struct {
 }
 
 type ProductivityConfig struct {
-	Enable       bool      `json:"enable"`
-	Provider     string    `json:"provider"`
-	Key          string    `json:"key"`
-	Url          string    `json:"url"`
-	Username     string    `json:"username"`
-	Password     string    `json:"password"`
-	TargetRobot  string    `json:"target_robot"`
-	Timezone     string    `json:"timezone"`
-	ManualConfig string    `json:"manual_config"`
-	NBA          NBAConfig `json:"nba"`
-	F1           F1Config  `json:"f1"`
+	Enable       bool          `json:"enable"`
+	Provider     string        `json:"provider"`
+	Key          string        `json:"key"`
+	Url          string        `json:"url"`
+	Username     string        `json:"username"`
+	Password     string        `json:"password"`
+	TargetRobot  string        `json:"target_robot"`
+	Timezone     string        `json:"timezone"`
+	ManualConfig string        `json:"manual_config"`
+	NBA          NBAConfig     `json:"nba"`
+	F1           F1Config      `json:"f1"`
+	Bedtime      BedtimeConfig `json:"bedtime"`
+}
+
+type BedtimeConfig struct {
+	Enable   bool   `json:"enable"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	Timezone string `json:"timezone"`
 }
 
 type NBAConfig struct {
@@ -167,17 +175,15 @@ type NBAConfig struct {
 }
 
 type F1Config struct {
-	Enable                      bool   `json:"enable"`
-	PregameMinutes              int    `json:"pregame_minutes"`
-	LiveUpdateMinutes           int    `json:"live_update_minutes"`
-	QualifyingLiveUpdateMinutes int    `json:"qualifying_live_update_minutes"`
-	PracticeLiveUpdateMinutes   int    `json:"practice_live_update_minutes"`
-	NotifyFinal                 bool   `json:"notify_final"`
-	NotifyQualifying            bool   `json:"notify_qualifying"`
-	NotifyPractice              bool   `json:"notify_practice"`
-	NotifyNotable               bool   `json:"notify_notable"`
-	AllowedStart                string `json:"allowed_start"`
-	AllowedEnd                  string `json:"allowed_end"`
+	Enable                      bool `json:"enable"`
+	PregameMinutes              int  `json:"pregame_minutes"`
+	LiveUpdateMinutes           int  `json:"live_update_minutes"`
+	QualifyingLiveUpdateMinutes int  `json:"qualifying_live_update_minutes"`
+	PracticeLiveUpdateMinutes   int  `json:"practice_live_update_minutes"`
+	NotifyFinal                 bool `json:"notify_final"`
+	NotifyQualifying            bool `json:"notify_qualifying"`
+	NotifyPractice              bool `json:"notify_practice"`
+	NotifyNotable               bool `json:"notify_notable"`
 }
 
 func join(p1, p2 string) string {

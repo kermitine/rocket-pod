@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
@@ -287,6 +286,21 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	manualConfig = string(canonicalConfig)
 
+	// Older clients can save reminders without changing the bedtime schedule.
+	bedtimeConfig := vars.APIConfig.Productivity.Bedtime
+	if raw := strings.TrimSpace(r.FormValue("bedtime_config")); raw != "" {
+		bedtimeConfig = vars.BedtimeConfig{}
+		if err := json.Unmarshal([]byte(raw), &bedtimeConfig); err != nil {
+			http.Error(w, "Invalid bedtime configuration", http.StatusBadRequest)
+			return
+		}
+		bedtimeConfig.Timezone = strings.TrimSpace(bedtimeConfig.Timezone)
+		if err := productivity.ValidateBedtimeConfig(bedtimeConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	var nbaConfig vars.NBAConfig
 	if nbaConfigStr != "" {
 		if err := json.Unmarshal([]byte(nbaConfigStr), &nbaConfig); err != nil {
@@ -338,13 +352,6 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	if f1Config.PracticeLiveUpdateMinutes > 60 {
 		f1Config.PracticeLiveUpdateMinutes = 60
 	}
-	if !validClockTime(f1Config.AllowedStart) {
-		f1Config.AllowedStart = "08:00"
-	}
-	if !validClockTime(f1Config.AllowedEnd) {
-		f1Config.AllowedEnd = "22:00"
-	}
-
 	previousConfig := vars.APIConfig.Productivity
 	vars.APIConfig.Productivity.Enable = provider == "todoist"
 	vars.APIConfig.Productivity.Provider = provider
@@ -357,6 +364,7 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	vars.APIConfig.Productivity.ManualConfig = manualConfig
 	vars.APIConfig.Productivity.NBA = nbaConfig
 	vars.APIConfig.Productivity.F1 = f1Config
+	vars.APIConfig.Productivity.Bedtime = bedtimeConfig
 
 	if err := vars.WriteConfigToDiskWithError(); err != nil {
 		vars.APIConfig.Productivity = previousConfig
@@ -723,15 +731,6 @@ func handleTestF1LivePracticeReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprint(w, "Live F1 practice update queued.")
-}
-
-func validClockTime(value string) bool {
-	if len(value) != 5 || value[2] != ':' {
-		return false
-	}
-	hour, hourErr := strconv.Atoi(value[:2])
-	minute, minuteErr := strconv.Atoi(value[3:])
-	return hourErr == nil && minuteErr == nil && hour >= 0 && hour < 24 && minute >= 0 && minute < 60
 }
 
 func handleSetKGAPI(w http.ResponseWriter, r *http.Request) {

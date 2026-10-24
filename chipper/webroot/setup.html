@@ -214,7 +214,7 @@
                     <select name="targetBot" class="prod-select" id="targetBot" form="productivityAPIAddForm">
                     <option value="" selected>None (First Available)</option>
                     </select><br />
-                    <small class="desc" style="display:block; margin-bottom:20px;">Select the robot that will perform the reminders.</small>
+                    <small class="desc" style="display:block; margin-bottom:20px;">Select the robot for reminders, sports updates, and bedtime.</small>
 
                     <div style="margin-bottom: 15px;">
                         <input type="checkbox" id="todoistEnable" onchange="checkProductivity()">
@@ -234,6 +234,42 @@
                 </button>
                 <div id="addProductivityProviderAPIStatus" style="margin-top:10px; font-size:0.9em; min-height: 20px;"></div>
             </div>
+        </div>
+
+        <hr class="small-hr" style="width: 100px; border-color: #333;">
+
+        <div class="bedtime-settings">
+            <h3>Bedtime</h3>
+            <div>
+                <input type="checkbox" id="bedtimeEnable">
+                <label class="checkbox-label" for="bedtimeEnable">Enforce a daily bedtime</label>
+            </div>
+            <p class="desc">Vector goes home and rests during these hours. Voice and touch still work; after one minute without interaction, he returns to sleep. Automatic reminders and sports alerts are skipped during bedtime.</p>
+            <div class="bedtime-fields">
+                <label for="bedtimeStart">Bedtime
+                    <input class="tinput" type="time" id="bedtimeStart" value="21:00">
+                </label>
+                <label for="bedtimeEnd">Morning
+                    <input class="tinput" type="time" id="bedtimeEnd" value="07:00">
+                </label>
+                <label for="bedtimeTimezone">Timezone
+                    <input class="tinput" type="text" id="bedtimeTimezone" list="bedtimeTimezones" placeholder="America/Los_Angeles" autocomplete="off">
+                </label>
+                <datalist id="bedtimeTimezones">
+                    <option value="America/Los_Angeles"></option>
+                    <option value="America/Denver"></option>
+                    <option value="America/Chicago"></option>
+                    <option value="America/New_York"></option>
+                    <option value="Europe/London"></option>
+                    <option value="Europe/Paris"></option>
+                    <option value="Asia/Tokyo"></option>
+                    <option value="Australia/Sydney"></option>
+                    <option value="UTC"></option>
+                </datalist>
+            </div>
+            <p class="desc">Use a timezone name such as America/Los_Angeles; daylight saving time is handled automatically. Keep Rocket Pod running and connected to enforce bedtime. Morning ends enforcement without forcing him awake.</p>
+            <button type="button" onclick="sendProductivityAPIKey('bedtimeSettingsStatus')" class="btn-outline-green">Apply Bedtime Settings</button>
+            <div id="bedtimeSettingsStatus" aria-live="polite"></div>
         </div>
 
         <hr class="small-hr" style="width: 100px; border-color: #333;">
@@ -394,13 +430,6 @@
 		        <label class="checkbox-label" for="f1NotifyNotable">Immediately announce leader changes and qualifying phase changes</label>
 		      </div>
 
-		      <label for="f1AllowedStart">Allowed Hours</label>
-		      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-		        <input id="f1AllowedStart" type="time" value="08:00" class="tinput" style="width:120px;">
-		        <span>to</span>
-		        <input id="f1AllowedEnd" type="time" value="22:00" class="tinput" style="width:120px;">
-		        <small class="desc" style="width:100%;">Vector stays quiet outside this window in your configured timezone.</small>
-		      </div>
 		    </div>
 		    <div style="margin-top:20px; padding-top:15px; border-top:1px solid #444; display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
 		      <button type="button" class="btn-generic btn-test" onclick="testF1LiveRaceReminder()">Test Live Race</button>

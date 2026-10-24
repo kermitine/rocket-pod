@@ -420,6 +420,10 @@ func checkNBAGames() {
 		if !shouldNotify {
 			continue
 		}
+		if isBedtimeForRobot(targetRobot, now) {
+			markNBANotified(game.ID, kind, now)
+			continue
+		}
 		faceData, renderErr := renderNBAScoreFace(ctx, game, now.Location())
 		if renderErr != nil {
 			logger.Println("Productivity: NBA score image failed: " + renderErr.Error())
@@ -743,6 +747,11 @@ func nbaNotificationForGame(game nbaEvent, config vars.NBAConfig, now time.Time)
 		return "", "", false
 	}
 	state := strings.ToLower(game.Status.Type.State)
+	if _, seen := nbaFinalNotified[game.ID]; !seen {
+		// Skip games that are already complete on first observation, including
+		// after startup or a configuration reload. Unfinished games stay eligible.
+		nbaFinalNotified[game.ID] = state == "post"
+	}
 	switch state {
 	case "pre":
 		start, err := time.Parse(time.RFC3339, game.Date)

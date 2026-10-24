@@ -1,6 +1,7 @@
 package productivity
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,6 +62,7 @@ var (
 func StartScheduler() {
 	logger.Println("Productivity: Starting Scheduler")
 	rand.Seed(time.Now().UnixNano())
+	refreshBedtimeConfiguration()
 	go schedulerLoop()
 	go executorLoop()
 }
@@ -70,6 +72,9 @@ func StopScheduler() {
 }
 
 func schedulerLoop() {
+	bedtimeCtx, stopBedtime := context.WithCancel(context.Background())
+	defer stopBedtime()
+	go bedtimeLoop(bedtimeCtx)
 	ticker := time.NewTicker(30 * time.Second)
 	externalApiTicker := time.NewTicker(5 * time.Minute)
 	nbaTicker := time.NewTicker(time.Minute)
@@ -175,6 +180,10 @@ func checkTodoistTasks() {
 		}
 
 		if taskTime.After(now) && taskTime.Before(startOfNextDay) {
+			if isBedtimeForRobot(targetBot, now) {
+				lastProcessedTasks[task.ID] = true
+				continue
+			}
 			if !lastProcessedTasks[task.ID] {
 				logger.Println("Productivity: Todoist task matched: " + task.Content)
 				taskQueue <- Task{
@@ -191,6 +200,9 @@ func checkTodoistTasks() {
 }
 
 func checkManualReminders(esn string, configStr string, generation uint64) {
+	if isBedtimeForRobot(esn, time.Now()) {
+		return
+	}
 	var reminders []ManualReminder
 	if err := json.Unmarshal([]byte(configStr), &reminders); err != nil {
 		return

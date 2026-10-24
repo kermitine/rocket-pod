@@ -25,7 +25,8 @@ func TestWriteConfigToDiskWithErrorPersistsEmptyReminders(t *testing.T) {
 		NotifyFinal:       true,
 		NotifyNotable:     true,
 	}
-	APIConfig.Productivity.F1 = F1Config{Enable: true, PregameMinutes: 60, LiveUpdateMinutes: 10, QualifyingLiveUpdateMinutes: 6, PracticeLiveUpdateMinutes: 3, NotifyFinal: true, NotifyQualifying: true, NotifyPractice: true, NotifyNotable: true, AllowedStart: "08:00", AllowedEnd: "22:00"}
+	APIConfig.Productivity.F1 = F1Config{Enable: true, PregameMinutes: 60, LiveUpdateMinutes: 10, QualifyingLiveUpdateMinutes: 6, PracticeLiveUpdateMinutes: 3, NotifyFinal: true, NotifyQualifying: true, NotifyPractice: true, NotifyNotable: true}
+	APIConfig.Productivity.Bedtime = BedtimeConfig{Enable: true, Start: "21:30", End: "07:15", Timezone: "America/Los_Angeles"}
 
 	if err := WriteConfigToDiskWithError(); err != nil {
 		t.Fatalf("WriteConfigToDiskWithError() error = %v", err)
@@ -44,8 +45,11 @@ func TestWriteConfigToDiskWithErrorPersistsEmptyReminders(t *testing.T) {
 	if !persisted.Productivity.NBA.Enable || len(persisted.Productivity.NBA.FavoriteTeams) != 2 || !persisted.Productivity.NBA.NotifyFinal || !persisted.Productivity.NBA.NotifyNotable {
 		t.Fatalf("NBA config was not persisted: %#v", persisted.Productivity.NBA)
 	}
-	if !persisted.Productivity.F1.Enable || persisted.Productivity.F1.LiveUpdateMinutes != 10 || persisted.Productivity.F1.QualifyingLiveUpdateMinutes != 6 || persisted.Productivity.F1.PracticeLiveUpdateMinutes != 3 || !persisted.Productivity.F1.NotifyFinal || !persisted.Productivity.F1.NotifyQualifying || !persisted.Productivity.F1.NotifyPractice || !persisted.Productivity.F1.NotifyNotable || persisted.Productivity.F1.AllowedStart != "08:00" {
+	if !persisted.Productivity.F1.Enable || persisted.Productivity.F1.LiveUpdateMinutes != 10 || persisted.Productivity.F1.QualifyingLiveUpdateMinutes != 6 || persisted.Productivity.F1.PracticeLiveUpdateMinutes != 3 || !persisted.Productivity.F1.NotifyFinal || !persisted.Productivity.F1.NotifyQualifying || !persisted.Productivity.F1.NotifyPractice || !persisted.Productivity.F1.NotifyNotable {
 		t.Fatalf("F1 config was not persisted: %#v", persisted.Productivity.F1)
+	}
+	if persisted.Productivity.Bedtime != APIConfig.Productivity.Bedtime {
+		t.Fatalf("bedtime config was not persisted: %#v", persisted.Productivity.Bedtime)
 	}
 }
 

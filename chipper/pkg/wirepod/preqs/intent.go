@@ -13,6 +13,8 @@ import (
 
 // This is here for compatibility with 1.6 and older software
 func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, error) {
+	endInteraction := productivity.BeginBedtimeInteraction(req.Device)
+	defer endInteraction()
 	var successMatched bool
 	speechReq := sr.ReqToSpeechRequest(req)
 	var transcribedText string

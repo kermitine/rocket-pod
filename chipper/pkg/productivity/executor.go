@@ -265,6 +265,7 @@ func snoozeTask(task Task) {
 // NotifyConfigUpdated invalidates work created from an older productivity
 // configuration. Sleeping work is discarded before it can reach the robot.
 func NotifyConfigUpdated() {
+	refreshBedtimeConfiguration()
 	atomic.AddUint64(&configurationGeneration, 1)
 	select {
 	case schedulerRefresh <- struct{}{}:
@@ -285,7 +286,8 @@ func taskIsExpiredAt(task Task, now time.Time) bool {
 }
 
 func taskCanRun(task Task) bool {
-	return taskIsCurrent(task) && !taskIsExpiredAt(task, time.Now())
+	now := time.Now()
+	return taskIsCurrent(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
 }
 
 func getReminderState(id string) (bool, bool) {
@@ -306,6 +308,14 @@ func getReminderState(id string) (bool, bool) {
 }
 
 func processTask(task Task) {
+	if taskSuppressedAtBedtime(task, time.Now()) {
+		logger.Println("Productivity: Skipping automatic notification during bedtime")
+		return
+	}
+	if task.Source == "standings" || task.Source == "test" {
+		endInteraction := BeginBedtimeInteraction(task.RobotESN)
+		defer endInteraction()
+	}
 	if taskIsExpiredAt(task, time.Now()) {
 		logger.Println("Productivity: Discarding reminder because its scheduled day has ended")
 		return
@@ -367,6 +377,7 @@ func processTask(task Task) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), reminderTaskTimeout(task))
 	defer cancel()
+	go cancelTaskAtBedtime(ctx, cancel, task)
 
 	bcClient, err := robot.Conn.BehaviorControl(ctx)
 	if err != nil {

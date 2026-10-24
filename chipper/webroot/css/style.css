@@ -810,6 +810,28 @@ canvas {
   width: 100%;
 }
 
+.bedtime-settings {
+  text-align: left;
+}
+
+.bedtime-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.bedtime-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bedtime-fields input {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
 .sports-actions {
   display: flex;
   flex-wrap: wrap;

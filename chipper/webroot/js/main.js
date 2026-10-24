@@ -7,7 +7,7 @@ let reminderCounter = 0;
 let productivityImageLibrary = [];
 
 // VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
-const ROCKET_POD_VERSION = "V47";
+const ROCKET_POD_VERSION = "V50";
 
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
@@ -589,9 +589,7 @@ function collectF1ConfigData() {
     notify_final: getE("f1NotifyFinal").checked,
     notify_qualifying: getE("f1NotifyQualifying").checked,
     notify_practice: getE("f1NotifyPractice").checked,
-    notify_notable: getE("f1NotifyNotable").checked,
-    allowed_start: getE("f1AllowedStart").value || "08:00",
-    allowed_end: getE("f1AllowedEnd").value || "22:00"
+    notify_notable: getE("f1NotifyNotable").checked
   };
 }
 
@@ -969,6 +967,12 @@ function sendProductivityAPIKey(statusElementId = "addProductivityProviderAPISta
   formData.append("manual_config", JSON.stringify(manualConfigArray));
   formData.append("nba_config", JSON.stringify(collectNBAConfigData()));
   formData.append("f1_config", JSON.stringify(collectF1ConfigData()));
+  formData.append("bedtime_config", JSON.stringify({
+    enable: getE("bedtimeEnable").checked,
+    start: getE("bedtimeStart").value,
+    end: getE("bedtimeEnd").value,
+    timezone: getE("bedtimeTimezone").value.trim()
+  }));
 
   displayMessage(statusElementId, "Saving...");
 
@@ -1009,6 +1013,12 @@ function updateProductivityAPI() {
                   getE("targetBot").value = data.target_robot;
               }
 
+              const bedtime = data.bedtime || {};
+              getE("bedtimeEnable").checked = bedtime.enable === true;
+              getE("bedtimeStart").value = bedtime.start || "21:00";
+              getE("bedtimeEnd").value = bedtime.end || "07:00";
+              getE("bedtimeTimezone").value = bedtime.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
               const nba = data.nba || {};
               getE("nbaEnable").checked = nba.enable === true;
               getE("nbaPregameMinutes").value = nba.pregame_minutes || 15;
@@ -1028,8 +1038,6 @@ function updateProductivityAPI() {
               getE("f1NotifyQualifying").checked = f1.notify_qualifying !== false;
               getE("f1NotifyPractice").checked = f1.notify_practice === true;
               getE("f1NotifyNotable").checked = f1.notify_notable === true;
-              getE("f1AllowedStart").value = f1.allowed_start || "08:00";
-              getE("f1AllowedEnd").value = f1.allowed_end || "22:00";
               toggleF1Settings();
 
               if (data.manual_config && data.manual_config.length > 2) { 

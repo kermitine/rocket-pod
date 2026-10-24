@@ -12,6 +12,8 @@ import (
 )
 
 func (s *Server) ProcessIntentGraph(req *vtt.IntentGraphRequest) (*vtt.IntentGraphResponse, error) {
+	endInteraction := productivity.BeginBedtimeInteraction(req.Device)
+	defer endInteraction()
 	var successMatched bool
 	speechReq := sr.ReqToSpeechRequest(req)
 	var transcribedText string
