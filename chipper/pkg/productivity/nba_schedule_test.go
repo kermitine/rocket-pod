@@ -175,10 +175,10 @@ func TestNBAGamesTodayHandlesESPNMinutePrecisionDenverAndPhiladelphia(t *testing
 	if err != nil || len(pages) != 2 {
 		t.Fatalf("got %d pages, %v; want Philadelphia and Denver", len(pages), err)
 	}
-	if !strings.Contains(pages[0].Speech, "Philadelphia 76ers") || !strings.Contains(pages[0].Speech, "4:30 PM PDT") {
+	if !strings.Contains(pages[0].Speech, "76ers") || strings.Contains(pages[0].Speech, "Philadelphia") || !strings.Contains(pages[0].Speech, "4:30 PM PDT") {
 		t.Fatalf("Philadelphia schedule: %s", pages[0].Speech)
 	}
-	if !strings.Contains(pages[1].Speech, "Denver Nuggets") || !strings.Contains(pages[1].Speech, "6:00 PM PDT") {
+	if !strings.Contains(pages[1].Speech, "Nuggets") || strings.Contains(pages[1].Speech, "Denver") || !strings.Contains(pages[1].Speech, "6:00 PM PDT") {
 		t.Fatalf("Denver schedule: %s", pages[1].Speech)
 	}
 }

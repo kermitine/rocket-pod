@@ -234,12 +234,48 @@ func TestNBANotificationsShareShortClockSpeech(t *testing.T) {
 	}
 }
 
-func TestSpokenNBATeamNameExpandsLAClippers(t *testing.T) {
-	competitor := nbaCompetitor{}
-	competitor.Team.Abbreviation = "LAC"
-	competitor.Team.DisplayName = "LA Clippers"
-	if got := spokenNBATeamName(competitor); got != "Los Angeles Clippers" {
-		t.Fatalf("spokenNBATeamName() = %q, want %q", got, "Los Angeles Clippers")
+func TestSpokenNBATeamNamesUseShorthand(t *testing.T) {
+	for _, test := range []struct{ full, code, want string }{
+		{"Philadelphia 76ers", "PHI", "76ers"},
+		{"Denver Nuggets", "DEN", "Nuggets"},
+		{"Los Angeles Lakers", "LAL", "Lakers"},
+		{"LA Clippers", "LAC", "Clippers"},
+		{"Golden State Warriors", "GS", "Warriors"},
+		{"Portland Trail Blazers", "POR", "Trail Blazers"},
+		{"Philadelphia 76ers", "", "76ers"},
+		{"Los Angeles Clippers", "", "Clippers"},
+		{" Denver Nuggets ", " den ", "Nuggets"},
+		{"Unknown Team", "NEW", "Unknown Team"},
+		{"", "NEW", "NEW"},
+	} {
+		competitor := nbaCompetitor{}
+		competitor.Team.DisplayName, competitor.Team.Abbreviation = test.full, test.code
+		if got := spokenNBATeamName(competitor); got != test.want {
+			t.Errorf("spokenNBATeamName(%q, %q) = %q, want %q", test.full, test.code, got, test.want)
+		}
+	}
+}
+
+func TestNBANotificationsUseShortTeamNames(t *testing.T) {
+	for _, state := range []string{"pre", "in", "post"} {
+		t.Run(state, func(t *testing.T) {
+			resetNBANotificationState()
+			t.Cleanup(resetNBANotificationState)
+			now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
+			game := testNBAGame("short-teams", "in", now.Add(10*time.Minute), "104", "111")
+			game.Competitions[0].Competitors[0].Team.Abbreviation = "PHI"
+			game.Competitions[0].Competitors[0].Team.DisplayName = "Philadelphia 76ers"
+			game.Competitions[0].Competitors[1].Team.Abbreviation = "DEN"
+			game.Competitions[0].Competitors[1].Team.DisplayName = "Denver Nuggets"
+			config := vars.NBAConfig{PregameMinutes: 15, NotifyFinal: true}
+			// Observe the unfinished game so its final score remains eligible.
+			nbaNotificationForGame(game, config, now)
+			game.Status.Type.State = state
+			_, phrase, notify := nbaNotificationForGame(game, config, now)
+			if !notify || !strings.Contains(phrase, "76ers") || !strings.Contains(phrase, "Nuggets") || strings.Contains(phrase, "Philadelphia") || strings.Contains(phrase, "Denver") {
+				t.Fatalf("%s notification did not use short names: %q", state, phrase)
+			}
+		})
 	}
 }
 

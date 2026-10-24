@@ -185,7 +185,7 @@ func TestStandingsPagesSortRowsByPosition(t *testing.T) {
 	}
 }
 
-func TestNBAStandingsExpandClippersCityForSpeech(t *testing.T) {
+func TestNBAStandingsUseShortTeamNamesForSpeech(t *testing.T) {
 	group := standingsNBAGroup("Western Conference", "W", 1)
 	group.Standings.Entries[0].Team.DisplayName = "LA Clippers"
 	group.Standings.Entries[0].Team.Abbreviation = "LAC"
@@ -195,8 +195,8 @@ func TestNBAStandingsExpandClippersCityForSpeech(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if speech := standingsPageSpeech(pages); !strings.Contains(speech, "Los Angeles Clippers") {
-		t.Fatalf("Clippers city was not expanded for speech: %s", speech)
+	if speech := standingsPageSpeech(pages); !strings.Contains(speech, "Clippers") || strings.Contains(speech, "Los Angeles") || strings.Contains(speech, "LA Clippers") {
+		t.Fatalf("standings did not use the short team name: %s", speech)
 	}
 }
 

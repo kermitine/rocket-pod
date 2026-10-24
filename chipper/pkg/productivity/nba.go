@@ -45,6 +45,19 @@ var nbaTeamNames = map[string]string{
 	"TOR": "Toronto Raptors", "UTAH": "Utah Jazz", "WSH": "Washington Wizards",
 }
 
+var nbaTeamShortNames = map[string]string{
+	"ATL": "Hawks", "BOS": "Celtics", "BKN": "Nets",
+	"CHA": "Hornets", "CHI": "Bulls", "CLE": "Cavaliers",
+	"DAL": "Mavericks", "DEN": "Nuggets", "DET": "Pistons",
+	"GS": "Warriors", "HOU": "Rockets", "IND": "Pacers",
+	"LAC": "Clippers", "LAL": "Lakers", "MEM": "Grizzlies",
+	"MIA": "Heat", "MIL": "Bucks", "MIN": "Timberwolves",
+	"NO": "Pelicans", "NY": "Knicks", "OKC": "Thunder",
+	"ORL": "Magic", "PHI": "76ers", "PHX": "Suns",
+	"POR": "Trail Blazers", "SA": "Spurs", "SAC": "Kings",
+	"TOR": "Raptors", "UTAH": "Jazz", "WSH": "Wizards",
+}
+
 var nbaSpokenClockPattern = regexp.MustCompile(`(?i)^\s*(\d+):(\d{2})\s*-\s*(1st|2nd|3rd|4th|\d*OT)\b`)
 
 type nbaScoreboard struct {
@@ -360,10 +373,22 @@ func spokenNBATeamName(competitor nbaCompetitor) string {
 }
 
 func spokenNBATeamDisplayName(displayName, abbreviation string) string {
-	// Vector's TTS expands "LA" as Louisiana, so use the unabbreviated city
-	// for the Clippers regardless of the display name returned by ESPN.
-	if strings.EqualFold(abbreviation, "LAC") || strings.EqualFold(displayName, "LA Clippers") {
-		return "Los Angeles Clippers"
+	if name := nbaTeamShortNames[strings.ToUpper(strings.TrimSpace(abbreviation))]; name != "" {
+		return name
+	}
+	displayName = strings.TrimSpace(displayName)
+	// Keep speech short when a feed supplies a display name without a team code.
+	for code, fullName := range nbaTeamNames {
+		shortName := nbaTeamShortNames[code]
+		if strings.EqualFold(displayName, fullName) || strings.EqualFold(displayName, shortName) {
+			return shortName
+		}
+	}
+	if strings.EqualFold(displayName, "Los Angeles Clippers") {
+		return "Clippers"
+	}
+	if displayName == "" {
+		return strings.TrimSpace(abbreviation)
 	}
 	return displayName
 }
