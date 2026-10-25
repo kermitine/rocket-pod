@@ -619,7 +619,7 @@ func f1PregameSpeech(event f1Event, race f1Competition, now time.Time) string {
 	} else if f1IsPractice(race) {
 		subject = "Practice"
 	}
-	return fmt.Sprintf("Formula 1 %s reminder. %s at %s starts in about %d minutes.", sessionName, subject, f1TrackName(event), minutes)
+	return fmt.Sprintf("Formula 1 %s reminder. %s at %s starts in about %s %s.", sessionName, subject, f1TrackName(event), spokenSportsNumber(strconv.Itoa(minutes)), pluralize(minutes, "minute", "minutes"))
 }
 
 func f1TrackName(event f1Event) string {

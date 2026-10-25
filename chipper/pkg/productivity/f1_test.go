@@ -92,6 +92,28 @@ func TestF1NotificationLifecycle(t *testing.T) {
 	}
 }
 
+func TestF1SessionRemindersUseSportsNumberShorthand(t *testing.T) {
+	now := time.Date(2026, time.June, 28, 12, 0, 0, 0, time.UTC)
+	event := f1Event{ShortName: "Test GP"}
+	for _, abbreviation := range []string{"Race", "Qual", "FP1", "Sprint"} {
+		for _, test := range []struct {
+			minutes int
+			want    string
+		}{
+			{1, "1 minute"}, {45, "45 minutes"}, {100, "one hundred minutes"},
+			{104, "one oh four minutes"}, {133, "one thirty three minutes"},
+		} {
+			t.Run(fmt.Sprintf("%s/%d", abbreviation, test.minutes), func(t *testing.T) {
+				session := f1LiveIntervalSession("reminder", abbreviation)
+				session.Date = now.Add(time.Duration(test.minutes) * time.Minute).Format(time.RFC3339)
+				if speech := f1PregameSpeech(event, session, now); !strings.Contains(speech, "starts in about "+test.want+".") {
+					t.Fatalf("session reminder = %q, want %q", speech, test.want)
+				}
+			})
+		}
+	}
+}
+
 func TestF1CompletedSessionsAreNotReplayed(t *testing.T) {
 	now := time.Date(2026, time.June, 28, 20, 0, 0, 0, time.UTC)
 	config := vars.F1Config{NotifyFinal: true}

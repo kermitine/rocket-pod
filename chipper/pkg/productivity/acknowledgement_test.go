@@ -72,7 +72,7 @@ func TestCommandAcknowledgementStreamsChimeWithoutBehaviorControl(t *testing.T) 
 		t.Fatal(err)
 	}
 	prepare := stream.sent[0].GetAudioStreamPrepare()
-	if prepare.GetAudioFrameRate() != 16000 || prepare.GetAudioVolume() == 0 || prepare.GetAudioVolume() > 100 {
+	if prepare.GetAudioFrameRate() != 16000 || prepare.GetAudioVolume() != 85 {
 		t.Fatalf("invalid audio format or volume: %v", prepare)
 	}
 	var pcm []byte
@@ -83,8 +83,8 @@ func TestCommandAcknowledgementStreamsChimeWithoutBehaviorControl(t *testing.T) 
 		}
 		pcm = append(pcm, chunk.AudioChunkSamples...)
 	}
-	if len(pcm) != 8000 || !bytes.Equal(pcm, commandAcknowledgementPCM()) {
-		t.Fatalf("quarter-second chime was truncated or corrupted: %d bytes", len(pcm))
+	if len(pcm) != 21760 || !bytes.Equal(pcm, commandAcknowledgementPCM()) {
+		t.Fatalf("680-millisecond chime was truncated or corrupted: %d bytes", len(pcm))
 	}
 	if stream.sent[len(stream.sent)-1].GetAudioStreamComplete() == nil || !stream.closed {
 		t.Fatal("audio stream was not completed and closed")
@@ -92,13 +92,13 @@ func TestCommandAcknowledgementStreamsChimeWithoutBehaviorControl(t *testing.T) 
 	var firstNote, secondNote bool
 	for offset := 0; offset < len(pcm); offset += 2 {
 		sample := int16(binary.LittleEndian.Uint16(pcm[offset:]))
-		if sample < -9000 || sample > 9000 {
+		if sample < -12000 || sample > 12000 {
 			t.Fatalf("sound clips at byte %d", offset)
 		}
 		switch {
-		case offset < 3520:
+		case offset < 9600:
 			firstNote = firstNote || sample != 0
-		case offset < 4480:
+		case offset < 12160:
 			if sample != 0 {
 				t.Fatal("notes have no silent gap")
 			}
@@ -113,7 +113,8 @@ func TestCommandAcknowledgementStreamsChimeWithoutBehaviorControl(t *testing.T) 
 
 func TestCommandAcknowledgementHandlesPlaybackFailures(t *testing.T) {
 	wantErr := errors.New("speaker unavailable")
-	for _, send := range []int{1, 2, 9, 10} {
+	chunkCount := (len(commandAcknowledgementPCM()) + 1023) / 1024
+	for _, send := range []int{1, 2, chunkCount + 1, chunkCount + 2} {
 		stream := successfulAcknowledgementStream()
 		stream.failSend, stream.sendErr = send, wantErr
 		if err := playVoiceCommandAcknowledgement(context.Background(), &acknowledgementRobotClient{stream: stream}); !errors.Is(err, wantErr) {

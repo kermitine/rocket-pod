@@ -371,7 +371,7 @@ func f1StandingsPages(response espnStandingsResponse, kind string) ([]TaskPage, 
 		for index, entry := range group.Standings.Entries {
 			points := standingStat(entry.Stats, "championshipPts", "points")
 			position := standingPosition(entry.Stats, index+1, "rank")
-			row := standingsRow{Position: position, Detail: points + " PTS", Speech: points + " points"}
+			row := standingsRow{Position: position, Detail: points + " PTS", Speech: spokenSportsNumber(points) + " points"}
 			if isConstructor {
 				row.Name = entry.Team.DisplayName
 				row.FaceName = entry.Team.ShortDisplayName
@@ -475,7 +475,7 @@ func standingStat(stats []espnStandingStat, wanted ...string) string {
 				if strings.TrimSpace(stat.DisplayValue) != "" {
 					return stat.DisplayValue
 				}
-				return strconv.Itoa(int(stat.Value))
+				return strconv.FormatFloat(stat.Value, 'f', -1, 64)
 			}
 		}
 	}

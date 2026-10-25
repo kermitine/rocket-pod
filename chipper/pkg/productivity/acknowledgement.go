@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	commandAcknowledgementTimeout    = 2 * time.Second
+	commandAcknowledgementTimeout    = 3 * time.Second
 	commandAcknowledgementSettle     = 150 * time.Millisecond
 	commandAcknowledgementSampleRate = 16000
 )
@@ -75,14 +75,14 @@ func playVoiceCommandAcknowledgement(ctx context.Context, client vectorpb.Extern
 		AudioRequestType: &vectorpb.ExternalAudioStreamRequest_AudioStreamPrepare{
 			AudioStreamPrepare: &vectorpb.ExternalAudioStreamPrepare{
 				AudioFrameRate: commandAcknowledgementSampleRate,
-				AudioVolume:    65,
+				AudioVolume:    85,
 			},
 		},
 	}); err != nil {
 		return err
 	}
 	pcm := commandAcknowledgementPCM()
-	// The quarter-second chime fits in the playback buffer. Respect the
+	// The short chime fits in the playback buffer. Respect the
 	// robot's 1024-byte message limit, including the last partial chunk.
 	for offset := 0; offset < len(pcm); offset += 1024 {
 		end := offset + 1024
@@ -124,14 +124,14 @@ func playVoiceCommandAcknowledgement(ctx context.Context, client vectorpb.Extern
 
 // Generate two rising notes locally, with soft envelopes to avoid clicks.
 func commandAcknowledgementPCM() []byte {
-	const noteSamples = commandAcknowledgementSampleRate * 110 / 1000
-	const gapSamples = commandAcknowledgementSampleRate * 30 / 1000
+	const noteSamples = commandAcknowledgementSampleRate * 300 / 1000
+	const gapSamples = commandAcknowledgementSampleRate * 80 / 1000
 	pcm := make([]byte, (2*noteSamples+gapSamples)*2)
 	for note, frequency := range []float64{880, 1174.66} {
 		for sample := 0; sample < noteSamples; sample++ {
 			envelope := math.Sin(math.Pi * float64(sample) / float64(noteSamples-1))
 			wave := math.Sin(2 * math.Pi * frequency * float64(sample) / commandAcknowledgementSampleRate)
-			value := int16(9000 * envelope * envelope * wave)
+			value := int16(12000 * envelope * envelope * wave)
 			offset := (note*(noteSamples+gapSamples) + sample) * 2
 			binary.LittleEndian.PutUint16(pcm[offset:], uint16(value))
 		}

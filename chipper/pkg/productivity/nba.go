@@ -1078,29 +1078,7 @@ func scoreOrZero(score string) string {
 }
 
 func spokenNBAScore(score string) string {
-	score = strings.TrimSpace(scoreOrZero(score))
-	points, err := strconv.Atoi(score)
-	if err != nil || points < 100 || points > 999 {
-		return score
-	}
-	small := [...]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"}
-	prefix := small[points/100] + " "
-	remainder := points % 100
-	switch {
-	case remainder == 0:
-		return prefix + "hundred"
-	case remainder < 10:
-		return prefix + "oh " + small[remainder]
-	case remainder < 20:
-		return prefix + small[remainder]
-	default:
-		tens := [...]string{"", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"}
-		spoken := prefix + tens[remainder/10]
-		if units := remainder % 10; units != 0 {
-			spoken += " " + small[units]
-		}
-		return spoken
-	}
+	return spokenSportsNumber(scoreOrZero(score))
 }
 
 func spokenNBAGameDetail(detail string) string {

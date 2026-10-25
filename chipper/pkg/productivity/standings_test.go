@@ -148,7 +148,7 @@ func TestF1StandingsPagesIncludeEveryDriverAndConstructor(t *testing.T) {
 	if !strings.Contains(standingsPageSpeech(constructorPages), "Constructor 11") {
 		t.Fatal("constructor speech omitted the final constructor")
 	}
-	if strings.Contains(standingsPageSpeech(constructorPages), ", 0 points") || !strings.Contains(standingsPageSpeech(constructorPages), "299 points") {
+	if strings.Contains(standingsPageSpeech(constructorPages), ", 0 points") || !strings.Contains(standingsPageSpeech(constructorPages), "two ninety nine points") {
 		t.Fatalf("constructor speech has incorrect points: %s", standingsPageSpeech(constructorPages))
 	}
 }
@@ -177,7 +177,7 @@ func TestF1StandingsDecodeESPNStringStatValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if speech := standingsPageSpeech(pages); !strings.Contains(speech, "156 points") {
+	if speech := standingsPageSpeech(pages); !strings.Contains(speech, "one fifty six points") {
 		t.Fatalf("driver points were not parsed: %s", speech)
 	}
 }
@@ -189,6 +189,43 @@ func TestStandingStatParsesNumericStringValue(t *testing.T) {
 	}
 	if got := standingStat([]espnStandingStat{stat}, "rank"); got != "12" {
 		t.Fatalf("standingStat() = %q, want 12", got)
+	}
+}
+
+func TestF1StandingsUseSportsNumberShorthand(t *testing.T) {
+	for _, kind := range []string{standingsF1Drivers, standingsF1Constructors} {
+		for _, source := range []string{"display", "numeric"} {
+			for _, test := range []struct {
+				points float64
+				want   string
+			}{
+				{0, "0"}, {99, "99"}, {100, "one hundred"}, {104, "one oh four"},
+				{110, "one ten"}, {133, "one thirty three"}, {156.5, "one fifty six point five"},
+				{205, "two oh five"}, {999, "nine ninety nine"}, {1000, "1000"},
+			} {
+				t.Run(fmt.Sprintf("%s/%s/%g", kind, source, test.points), func(t *testing.T) {
+					constructor := kind == standingsF1Constructors
+					name := "Driver Standings"
+					if constructor {
+						name = "Constructor Standings"
+					}
+					group := standingsF1Group(name, constructor, 1)
+					stat := &group.Standings.Entries[0].Stats[1]
+					stat.Value = test.points
+					stat.DisplayValue = fmt.Sprint(test.points)
+					if source == "numeric" {
+						stat.DisplayValue = ""
+					}
+					pages, err := f1StandingsPages(espnStandingsResponse{Children: []espnStandingsGroup{group}}, kind)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if speech := standingsPageSpeech(pages); !strings.Contains(speech, test.want+" points.") {
+						t.Fatalf("standings speech = %q, want %q", speech, test.want+" points.")
+					}
+				})
+			}
+		}
 	}
 }
 
