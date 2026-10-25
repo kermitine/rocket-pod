@@ -75,9 +75,13 @@ func TestNBAGamesTodayPagesFilterSortAndPairSpeechWithFaces(t *testing.T) {
 	if !reflect.DeepEqual(*requested, []string{"20260101", "20260102"}) {
 		t.Fatalf("requested dates = %v", *requested)
 	}
-	for index, want := range []string{"4:00 PM PST", "7:00 PM PST", "10:00 PM PST"} {
+	for index, want := range []string{
+		"The Lakers played the Celtics at 4:00 PM.",
+		"The Lakers are playing the Celtics at 7:00 PM.",
+		"The Lakers play the Celtics at 10:00 PM.",
+	} {
 		if !strings.Contains(pages[index].Speech, want) {
-			t.Errorf("page %d speech = %q, want local tip off %s", index, pages[index].Speech, want)
+			t.Errorf("page %d speech = %q, want matchup and local time %q", index, pages[index].Speech, want)
 		}
 		if len(pages[index].FaceData) != 184*96*2 {
 			t.Errorf("page %d face data length = %d", index, len(pages[index].FaceData))
@@ -89,10 +93,7 @@ func TestNBAGamesTodayPagesFilterSortAndPairSpeechWithFaces(t *testing.T) {
 	if !strings.Contains(pages[1].Speech, "are playing") || !strings.Contains(pages[1].Speech, "one thirty three") || !strings.Contains(pages[1].Speech, "one thirty") {
 		t.Errorf("live game speech = %q", pages[1].Speech)
 	}
-	if strings.Contains(pages[2].Speech, "Tip off was") || !strings.Contains(pages[2].Speech, "Tip off is") {
-		t.Errorf("upcoming game speech = %q", pages[2].Speech)
-	}
-	wantFace, err := renderNBAGameFace(context.Background(), upcoming, "NBA TODAY 3/3", "10:00 PM PST", false)
+	wantFace, err := renderNBAGameFace(context.Background(), upcoming, "NBA TODAY 3/3", "10:00 PM", false)
 	if err != nil || !bytes.Equal(pages[2].FaceData, wantFace) {
 		t.Fatalf("upcoming speech is not paired with its matchup and start time face: %v", err)
 	}
@@ -175,10 +176,10 @@ func TestNBAGamesTodayHandlesESPNMinutePrecisionDenverAndPhiladelphia(t *testing
 	if err != nil || len(pages) != 2 {
 		t.Fatalf("got %d pages, %v; want Philadelphia and Denver", len(pages), err)
 	}
-	if !strings.Contains(pages[0].Speech, "76ers") || strings.Contains(pages[0].Speech, "Philadelphia") || !strings.Contains(pages[0].Speech, "4:30 PM PDT") {
+	if !strings.Contains(pages[0].Speech, "76ers") || strings.Contains(pages[0].Speech, "Philadelphia") || !strings.Contains(pages[0].Speech, "4:30 PM.") {
 		t.Fatalf("Philadelphia schedule: %s", pages[0].Speech)
 	}
-	if !strings.Contains(pages[1].Speech, "Nuggets") || strings.Contains(pages[1].Speech, "Denver") || !strings.Contains(pages[1].Speech, "6:00 PM PDT") {
+	if !strings.Contains(pages[1].Speech, "Nuggets") || strings.Contains(pages[1].Speech, "Denver") || !strings.Contains(pages[1].Speech, "6:00 PM.") {
 		t.Fatalf("Denver schedule: %s", pages[1].Speech)
 	}
 }
@@ -221,23 +222,18 @@ func TestQueueVoiceNBAGamesTodayReportsFetchFailure(t *testing.T) {
 	if err := QueueVoiceNBAGamesToday("schedule-robot"); err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < 2; index++ {
-		select {
-		case task := <-taskQueue:
-			if task.RobotESN != "schedule-robot" || task.Source != nbaGamesTodaySource || !taskIsCurrent(task) {
-				t.Fatalf("unexpected queued task: %s, robot=%s, source=%s", task.ID, task.RobotESN, task.Source)
-			}
-			if !task.ExpiresAt.After(time.Now()) || task.ExpiresAt.Format("15:04:05") != "00:00:00" {
-				t.Fatalf("today's schedule must expire at the next local midnight, got %v", task.ExpiresAt)
-			}
-			if index == 0 && (!task.AcknowledgementOnly || task.AcknowledgementAnimation == "") {
-				t.Fatal("request did not queue an acknowledgement first")
-			}
-			if index == 1 && (len(task.Pages) != 1 || !strings.Contains(task.Pages[0].Speech, "couldn't get today's NBA games")) {
-				t.Fatal("failed request did not queue an explanation")
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("NBA voice request did not queue a response")
+	select {
+	case task := <-taskQueue:
+		if task.RobotESN != "schedule-robot" || task.Source != nbaGamesTodaySource || !taskIsCurrent(task) {
+			t.Fatalf("unexpected queued task: %s, robot=%s, source=%s", task.ID, task.RobotESN, task.Source)
 		}
+		if !task.ExpiresAt.After(time.Now()) || task.ExpiresAt.Format("15:04:05") != "00:00:00" {
+			t.Fatalf("today's schedule must expire at the next local midnight, got %v", task.ExpiresAt)
+		}
+		if len(task.Pages) != 1 || !strings.Contains(task.Pages[0].Speech, "couldn't get today's NBA games") {
+			t.Fatal("failed request did not queue an explanation; acknowledgement must not use the reminder queue")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("NBA voice request did not queue a response")
 	}
 }

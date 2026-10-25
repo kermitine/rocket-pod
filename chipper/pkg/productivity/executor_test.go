@@ -297,16 +297,6 @@ func TestSpeechWithoutDiacritics(t *testing.T) {
 	}
 }
 
-func TestAcknowledgementAnimationRequestUsesOnlyFaceTrack(t *testing.T) {
-	request := acknowledgementAnimationRequest("anim_knowledgegraph_success_01")
-	if request.GetAnimation().GetName() != "anim_knowledgegraph_success_01" || request.GetLoops() != 1 {
-		t.Fatalf("acknowledgement request has wrong animation: %#v", request)
-	}
-	if !request.GetIgnoreBodyTrack() || !request.GetIgnoreHeadTrack() || !request.GetIgnoreLiftTrack() {
-		t.Fatalf("acknowledgement request can be blocked by physical tracks: %#v", request)
-	}
-}
-
 func TestReminderFaceSearchAnimationRequestUsesOnlyFaceTrack(t *testing.T) {
 	request := reminderFaceSearchAnimationRequest()
 	if request.GetAnimation().GetName() != reminderFaceSearchAnimation || request.GetLoops() != 1 {

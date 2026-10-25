@@ -39,14 +39,7 @@ func QueueVoiceNBAGamesToday(robotESN string) error {
 	favorites := NormalizeNBATeams(vars.APIConfig.Productivity.NBA.FavoriteTeams)
 	now := timeInProductivityTimezone(time.Now(), vars.APIConfig.Productivity.Timezone)
 	expiresAt := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
-	select {
-	case taskQueue <- Task{
-		ID: fmt.Sprintf("nba_schedule_ack_%d", time.Now().UnixNano()), RobotESN: robotESN,
-		Source: nbaGamesTodaySource, AcknowledgementOnly: true, ExpiresAt: expiresAt,
-		AcknowledgementAnimation: standingsAcknowledgementAnimation, configurationGeneration: generation,
-	}:
-	default:
-	}
+	acknowledged := startVoiceCommandAcknowledgement(context.Background(), robotESN)
 	go func() {
 		endInteraction := BeginBedtimeInteraction(robotESN)
 		defer endInteraction()
@@ -57,6 +50,7 @@ func QueueVoiceNBAGamesToday(robotESN string) error {
 			logger.Println("Productivity: NBA schedule request failed: " + err.Error())
 			pages = nbaScheduleMessagePages("UNAVAILABLE", "Sorry, I couldn't get today's NBA games. Please try again.")
 		}
+		<-acknowledged
 		select {
 		case taskQueue <- Task{
 			ID: fmt.Sprintf("nba_schedule_%d", time.Now().UnixNano()), RobotESN: robotESN,
@@ -127,7 +121,7 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 	for index, game := range games {
 		away, home, _ := nbaGameTeams(game)
 		tipoff, _ := parseNBAGameTime(game.Date)
-		clock := tipoff.In(now.Location()).Format("3:04 PM MST")
+		clock := tipoff.In(now.Location()).Format("3:04 PM")
 		label, verb, scores := "TODAY", "play", false
 		switch strings.ToLower(game.Status.Type.State) {
 		case "in":
@@ -135,9 +129,9 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 		case "post":
 			label, verb, scores = "FINAL", "played", true
 		}
-		speech := fmt.Sprintf("The %s %s the %s. Tip off is at %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock)
+		speech := fmt.Sprintf("The %s %s the %s at %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock)
 		if scores {
-			speech = fmt.Sprintf("The %s %s the %s. Tip off was at %s. %s, %s. %s, %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock, spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score))
+			speech = fmt.Sprintf("The %s %s the %s at %s. %s, %s. %s, %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock, spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score))
 		}
 		status := strings.ToLower(game.Status.Type.Name + " " + game.Status.Type.Detail)
 		switch {

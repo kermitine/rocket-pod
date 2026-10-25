@@ -17,16 +17,15 @@ import (
 )
 
 const (
-	standingsNBAEast                  = "nba_east"
-	standingsNBAWest                  = "nba_west"
-	standingsNBAAll                   = "nba_all"
-	standingsF1Drivers                = "f1_drivers"
-	standingsF1Constructors           = "f1_constructors"
-	nbaStandingsEndpoint              = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?region=us&lang=en&contentorigin=espn&type=0&level=2"
-	f1StandingsEndpoint               = "https://site.web.api.espn.com/apis/v2/sports/racing/f1/standings?region=us&lang=en"
-	standingsEntriesPerPage           = 5
-	standingsRequestTimeout           = 45 * time.Second
-	standingsAcknowledgementAnimation = "anim_knowledgegraph_success_01"
+	standingsNBAEast        = "nba_east"
+	standingsNBAWest        = "nba_west"
+	standingsNBAAll         = "nba_all"
+	standingsF1Drivers      = "f1_drivers"
+	standingsF1Constructors = "f1_constructors"
+	nbaStandingsEndpoint    = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?region=us&lang=en&contentorigin=espn&type=0&level=2"
+	f1StandingsEndpoint     = "https://site.web.api.espn.com/apis/v2/sports/racing/f1/standings?region=us&lang=en"
+	standingsEntriesPerPage = 5
+	standingsRequestTimeout = 45 * time.Second
 )
 
 type espnStandingsResponse struct {
@@ -240,18 +239,7 @@ func QueueVoiceStandings(robotESN, kind string) error {
 		return fmt.Errorf("unknown standings kind %q", kind)
 	}
 	generation := currentConfigurationGeneration()
-	acknowledgement := Task{
-		ID:                       fmt.Sprintf("standings_ack_%d", time.Now().UnixNano()),
-		RobotESN:                 robotESN,
-		Source:                   "standings",
-		AcknowledgementAnimation: standingsAcknowledgementAnimation,
-		AcknowledgementOnly:      true,
-		configurationGeneration:  generation,
-	}
-	select {
-	case taskQueue <- acknowledgement:
-	default:
-	}
+	acknowledged := startVoiceCommandAcknowledgement(context.Background(), robotESN)
 	go func() {
 		endInteraction := BeginBedtimeInteraction(robotESN)
 		defer endInteraction()
@@ -261,6 +249,7 @@ func QueueVoiceStandings(robotESN, kind string) error {
 		if err != nil {
 			pages = standingsErrorPages(kind, err)
 		}
+		<-acknowledged
 		task := Task{
 			ID:                      fmt.Sprintf("standings_%s_%d", kind, time.Now().UnixNano()),
 			RobotESN:                robotESN,

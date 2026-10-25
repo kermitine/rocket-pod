@@ -4,9 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestQueueVoiceStandingsRespondsWhenAcknowledgementUnavailable(t *testing.T) {
+	previousClient := externalApiClient
+	t.Cleanup(func() { externalApiClient = previousClient })
+	externalApiClient = &http.Client{Transport: bedtimeScoreboardTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	for _, kind := range []string{standingsNBAEast, standingsF1Drivers, standingsF1Constructors} {
+		t.Run(kind, func(t *testing.T) {
+			if err := QueueVoiceStandings("standings-test-robot", kind); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case task := <-taskQueue:
+				if task.RobotESN != "standings-test-robot" || task.Source != "standings" || !taskIsCurrent(task) || len(task.Pages) == 0 {
+					t.Fatalf("expected standings response without a queued acknowledgement: %v", task)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("acknowledgement failure blocked the standings response")
+			}
+		})
+	}
+}
 
 func TestMatchStandingsVoiceCommand(t *testing.T) {
 	tests := []struct {

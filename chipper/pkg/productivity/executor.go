@@ -34,21 +34,19 @@ import (
 )
 
 type Task struct {
-	ID                       string
-	RobotESN                 string
-	Phrases                  []string
-	Image                    string
-	FaceData                 []byte
-	AdditionalFaceData       [][]byte
-	Pages                    []TaskPage
-	Source                   string
-	RetryCount               int
-	RequireConfirmation      bool
-	SnoozeMinutes            int
-	ExpiresAt                time.Time
-	AcknowledgementAnimation string
-	AcknowledgementOnly      bool
-	configurationGeneration  uint64
+	ID                      string
+	RobotESN                string
+	Phrases                 []string
+	Image                   string
+	FaceData                []byte
+	AdditionalFaceData      [][]byte
+	Pages                   []TaskPage
+	Source                  string
+	RetryCount              int
+	RequireConfirmation     bool
+	SnoozeMinutes           int
+	ExpiresAt               time.Time
+	configurationGeneration uint64
 }
 
 type TaskPage struct {
@@ -114,8 +112,6 @@ const (
 	confirmationListenSettle     = 1250 * time.Millisecond
 	confirmationListenRetryDelay = 1500 * time.Millisecond
 	confirmationListenAttempts   = 3
-	acknowledgementSettle        = 350 * time.Millisecond
-	acknowledgementRetryDelay    = 500 * time.Millisecond
 	reminderFaceSearchAnimation  = "anim_knowledgegraph_searching_01"
 )
 
@@ -333,9 +329,6 @@ func processTask(task Task) {
 	robot, err := vars.GetRobot(task.RobotESN)
 	if err != nil {
 		reminderConnections.observe(task.RobotESN, nil, err, time.Now())
-		if task.AcknowledgementOnly {
-			return
-		}
 		deferTask(task, "robot is unavailable", reminderOfflineRetryDelay)
 		return
 	}
@@ -349,9 +342,6 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 
 	_, delay, reason := checkReminderReadiness(context.Background(), task.RobotESN, robot.Conn)
 	if delay > 0 {
-		if task.AcknowledgementOnly {
-			return
-		}
 		deferTask(task, reason, delay)
 		return
 	}
@@ -364,17 +354,11 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 
 	bcClient, err := robot.Conn.BehaviorControl(ctx)
 	if err != nil {
-		if task.AcknowledgementOnly {
-			return
-		}
 		deferTask(task, "robot became unavailable", reminderOfflineRetryDelay)
 		return
 	}
 
 	if err := acquireBehaviorControl(bcClient); err != nil {
-		if task.AcknowledgementOnly {
-			return
-		}
 		deferTask(task, "robot is not ready for behavior control: "+err.Error(), reminderOfflineRetryDelay)
 		return
 	}
@@ -387,15 +371,6 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 			}
 		}
 	}()
-	if task.AcknowledgementAnimation != "" {
-		if err := playAcknowledgementAnimation(ctx, robot, task.AcknowledgementAnimation); err != nil {
-			logger.Println("Productivity: Command acknowledgement failed: " + err.Error())
-		}
-	}
-	if task.AcknowledgementOnly {
-		return
-	}
-
 	// Acquiring control may take time. Use another battery reading immediately
 	// before any charger departure or reminder movement, never the earlier sample.
 	battResp, delay, reason := checkReminderReadiness(ctx, task.RobotESN, robot.Conn)
@@ -501,6 +476,9 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 		result, err := waitForConfirmation(ctx, robot, task.RobotESN)
 		if err != nil {
 			logger.Println("Productivity: Confirmation wait failed: " + err.Error())
+		}
+		if result == confirmationAccepted || result == confirmationDeclined {
+			<-startVoiceCommandAcknowledgement(ctx, task.RobotESN)
 		}
 		if !taskCanRun(task) {
 			return
@@ -681,16 +659,6 @@ func sayConfirmationResponse(ctx context.Context, robot *vector.Vector, text str
 	return lastErr
 }
 
-func acknowledgementAnimationRequest(name string) *vectorpb.PlayAnimationRequest {
-	return &vectorpb.PlayAnimationRequest{
-		Animation:       &vectorpb.Animation{Name: name},
-		Loops:           1,
-		IgnoreBodyTrack: true,
-		IgnoreHeadTrack: true,
-		IgnoreLiftTrack: true,
-	}
-}
-
 func reminderFaceSearchAnimationRequest() *vectorpb.PlayAnimationRequest {
 	return &vectorpb.PlayAnimationRequest{
 		Animation:       &vectorpb.Animation{Name: reminderFaceSearchAnimation},
@@ -713,45 +681,6 @@ func playReminderFaceSearchAnimation(ctx context.Context, robot *vector.Vector) 
 		return fmt.Errorf("animation returned %s", response.GetResult().String())
 	}
 	return nil
-}
-
-// Voice intent handling can hold its face track briefly after returning its
-// acknowledgement. Wait for that track to settle and retry once if VIC accepts
-// the RPC but reports that the animation could not activate.
-func playAcknowledgementAnimation(ctx context.Context, robot *vector.Vector, name string) error {
-	settleTimer := time.NewTimer(acknowledgementSettle)
-	select {
-	case <-ctx.Done():
-		settleTimer.Stop()
-		return ctx.Err()
-	case <-settleTimer.C:
-	}
-
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		response, err := robot.Conn.PlayAnimation(ctx, acknowledgementAnimationRequest(name))
-		if err == nil && response != nil && response.GetResult() == vectorpb.BehaviorResults_BEHAVIOR_COMPLETE_STATE {
-			return nil
-		}
-		switch {
-		case err != nil:
-			lastErr = err
-		case response == nil:
-			lastErr = fmt.Errorf("animation returned no response")
-		default:
-			lastErr = fmt.Errorf("animation returned %s", response.GetResult().String())
-		}
-		if attempt == 0 {
-			retryTimer := time.NewTimer(acknowledgementRetryDelay)
-			select {
-			case <-ctx.Done():
-				retryTimer.Stop()
-				return ctx.Err()
-			case <-retryTimer.C:
-			}
-		}
-	}
-	return lastErr
 }
 
 // speechWithoutDiacritics keeps names readable in the UI while giving Vector's
