@@ -18,6 +18,60 @@ func TestNormalizeNBATeams(t *testing.T) {
 	}
 }
 
+func TestSpokenNBAScoreUsesShorthand(t *testing.T) {
+	for _, test := range []struct{ score, want string }{
+		{"133", "one thirty three"}, {"130", "one thirty"},
+		{"104", "one oh four"}, {"109", "one oh nine"},
+		{"110", "one ten"}, {"111", "one eleven"}, {"119", "one nineteen"},
+		{"100", "one hundred"}, {"200", "two hundred"}, {"205", "two oh five"},
+		{"99", "99"}, {"0", "0"}, {"", "0"}, {" 133 ", "one thirty three"},
+		{"unavailable", "unavailable"}, {"1000", "1000"},
+	} {
+		if got := spokenNBAScore(test.score); got != test.want {
+			t.Errorf("spokenNBAScore(%q) = %q, want %q", test.score, got, test.want)
+		}
+	}
+}
+
+func TestNBAAnnouncementsShareScoreShorthand(t *testing.T) {
+	for _, test := range []struct {
+		name, beforeAway, beforeHome, away, home, detail, state, wantKind string
+		want                                                              []string
+	}{
+		{"live", "133", "132", "133", "132", "7:20 - 1st", "in", "live", []string{"one thirty three", "one thirty two"}},
+		{"final", "133", "132", "133", "132", "Final", "post", "final", []string{"one thirty three", "one thirty two"}},
+		{"away lead", "131", "132", "133", "132", "3:00 - 4th", "in", "notable", []string{"one thirty three to one thirty two"}},
+		{"home lead", "133", "132", "133", "134", "3:00 - 4th", "in", "notable", []string{"one thirty four to one thirty three"}},
+		{"tie", "133", "132", "133", "133", "3:00 - 4th", "in", "notable", []string{"tied at one thirty three"}},
+		{"close game", "133", "128", "133", "131", "1:20 - 4th", "in", "notable", []string{"Close game", "one thirty three", "one thirty one"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resetNBANotificationState()
+			t.Cleanup(resetNBANotificationState)
+			now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
+			game := testNBAGame("score-shorthand", "in", now, test.beforeAway, test.beforeHome)
+			game.Status.Type.ShortDetail = "3:00 - 4th"
+			config := vars.NBAConfig{NotifyNotable: true, NotifyFinal: true, LiveUpdateMinutes: 30}
+			if test.name != "live" {
+				kind, _, _ := nbaNotificationForGame(game, config, now)
+				markNBANotified(game.ID, kind, now)
+			}
+			game.Status.Type.State, game.Status.Type.ShortDetail = test.state, test.detail
+			game.Competitions[0].Competitors[0].Score = test.away
+			game.Competitions[0].Competitors[1].Score = test.home
+			kind, phrase, notify := nbaNotificationForGame(game, config, now.Add(time.Minute))
+			if !notify || kind != test.wantKind {
+				t.Fatalf("notification = %q, %q, %v", kind, phrase, notify)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(phrase, want) {
+					t.Errorf("speech %q does not contain %q", phrase, want)
+				}
+			}
+		})
+	}
+}
+
 func TestNBAPregameNotification(t *testing.T) {
 	resetNBANotificationState()
 	now := time.Date(2026, time.January, 2, 1, 0, 0, 0, time.UTC)
@@ -394,7 +448,7 @@ func TestNBAFinalNotificationAndFaceRender(t *testing.T) {
 	game.Status.Type.State = "post"
 
 	kind, phrase, notify := nbaNotificationForGame(game, config, now)
-	if !notify || kind != "final" || !strings.Contains(phrase, "104") || !strings.Contains(phrase, "111") {
+	if !notify || kind != "final" || !strings.Contains(phrase, "one oh four") || !strings.Contains(phrase, "one eleven") {
 		t.Fatalf("final notification = (%q, %q, %v)", kind, phrase, notify)
 	}
 	markNBANotified(game.ID, kind, now)

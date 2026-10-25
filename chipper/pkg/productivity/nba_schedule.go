@@ -137,7 +137,7 @@ func fetchNBAGamesTodayPages(ctx context.Context, now time.Time, favoriteTeams [
 		}
 		speech := fmt.Sprintf("The %s %s the %s. Tip off is at %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock)
 		if scores {
-			speech = fmt.Sprintf("The %s %s the %s. Tip off was at %s. %s, %s. %s, %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock, spokenNBATeamName(away), scoreOrZero(away.Score), spokenNBATeamName(home), scoreOrZero(home.Score))
+			speech = fmt.Sprintf("The %s %s the %s. Tip off was at %s. %s, %s. %s, %s.", spokenNBATeamName(away), verb, spokenNBATeamName(home), clock, spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score))
 		}
 		status := strings.ToLower(game.Status.Type.Name + " " + game.Status.Type.Detail)
 		switch {

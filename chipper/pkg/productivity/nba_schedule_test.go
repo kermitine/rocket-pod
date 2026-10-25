@@ -56,7 +56,7 @@ func TestNBAGamesTodayPagesFilterSortAndPairSpeechWithFaces(t *testing.T) {
 	}
 	now := time.Date(2026, 1, 1, 20, 0, 0, 0, location)
 	final := testNBAGame("final", "post", now.Add(-4*time.Hour), "104", "111")
-	live := testNBAGame("live", "in", now.Add(-time.Hour), "88", "91")
+	live := testNBAGame("live", "in", now.Add(-time.Hour), "133", "130")
 	upcoming := testNBAGame("upcoming", "pre", now.Add(2*time.Hour), "0", "0")
 	unrelated := testNBAGame("other", "pre", now, "0", "0")
 	unrelated.Competitions[0].Competitors[0].Team.Abbreviation = "CLE"
@@ -83,10 +83,10 @@ func TestNBAGamesTodayPagesFilterSortAndPairSpeechWithFaces(t *testing.T) {
 			t.Errorf("page %d face data length = %d", index, len(pages[index].FaceData))
 		}
 	}
-	if !strings.Contains(pages[0].Speech, "3 NBA games today") || !strings.Contains(pages[0].Speech, "played") || !strings.Contains(pages[0].Speech, "111") {
+	if !strings.Contains(pages[0].Speech, "3 NBA games today") || !strings.Contains(pages[0].Speech, "played") || !strings.Contains(pages[0].Speech, "one eleven") {
 		t.Errorf("final game speech = %q", pages[0].Speech)
 	}
-	if !strings.Contains(pages[1].Speech, "are playing") || !strings.Contains(pages[1].Speech, "91") {
+	if !strings.Contains(pages[1].Speech, "are playing") || !strings.Contains(pages[1].Speech, "one thirty three") || !strings.Contains(pages[1].Speech, "one thirty") {
 		t.Errorf("live game speech = %q", pages[1].Speech)
 	}
 	if strings.Contains(pages[2].Speech, "Tip off was") || !strings.Contains(pages[2].Speech, "Tip off is") {

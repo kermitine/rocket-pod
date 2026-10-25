@@ -229,17 +229,8 @@ func rescheduleAbortedTask(task Task, robot *vector.Vector, reason string) {
 	batteryCtx, cancel := context.WithTimeout(context.Background(), reminderAvailabilityTimeout)
 	battery, err := robot.Conn.BatteryState(batteryCtx, &vectorpb.BatteryStateRequest{})
 	cancel()
-	if err != nil || battery == nil {
-		deferTask(task, reason+"; robot state is unavailable", reminderOfflineRetryDelay)
-		return
-	}
-	level := battery.GetBatteryLevel()
-	if level == vectorpb.BatteryLevel_BATTERY_LEVEL_UNKNOWN {
-		deferTask(task, reason+"; battery state is unavailable", reminderOfflineRetryDelay)
-		return
-	}
-	if !reminderBatteryAllowsDelivery(level) {
-		deferTask(task, reason+"; battery is low", reminderLowBatteryRetryDelay)
+	if delay, readinessReason := reminderReadinessDeferral(&reminderConnections, task.RobotESN, battery, err, time.Now()); delay > 0 {
+		deferTask(task, reason+"; "+readinessReason, delay)
 		return
 	}
 	retryTask(task, reason)
@@ -341,40 +332,32 @@ func processTask(task Task) {
 
 	robot, err := vars.GetRobot(task.RobotESN)
 	if err != nil {
+		reminderConnections.observe(task.RobotESN, nil, err, time.Now())
 		if task.AcknowledgementOnly {
 			return
 		}
 		deferTask(task, "robot is unavailable", reminderOfflineRetryDelay)
 		return
 	}
+	deliverReminderTask(task, robot)
+}
 
+func deliverReminderTask(task Task, robot *vector.Vector) {
 	if !taskCanRun(task) {
 		return
 	}
 
-	availabilityCtx, availabilityCancel := context.WithTimeout(context.Background(), reminderAvailabilityTimeout)
-	battResp, err := robot.Conn.BatteryState(availabilityCtx, &vectorpb.BatteryStateRequest{})
-	availabilityCancel()
-	if err != nil || battResp == nil {
+	_, delay, reason := checkReminderReadiness(context.Background(), task.RobotESN, robot.Conn)
+	if delay > 0 {
 		if task.AcknowledgementOnly {
 			return
 		}
-		deferTask(task, "robot is offline", reminderOfflineRetryDelay)
+		deferTask(task, reason, delay)
 		return
 	}
 	if !taskCanRun(task) {
 		return
 	}
-	batteryLevel := battResp.GetBatteryLevel()
-	if !task.AcknowledgementOnly && batteryLevel == vectorpb.BatteryLevel_BATTERY_LEVEL_UNKNOWN {
-		deferTask(task, "battery level is unavailable", reminderOfflineRetryDelay)
-		return
-	}
-	if !task.AcknowledgementOnly && !reminderBatteryAllowsDelivery(batteryLevel) {
-		deferTask(task, "battery is not above the low level", reminderLowBatteryRetryDelay)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), reminderTaskTimeout(task))
 	defer cancel()
 	go cancelTaskAtBedtime(ctx, cancel, task)
@@ -413,6 +396,13 @@ func processTask(task Task) {
 		return
 	}
 
+	// Acquiring control may take time. Use another battery reading immediately
+	// before any charger departure or reminder movement, never the earlier sample.
+	battResp, delay, reason := checkReminderReadiness(ctx, task.RobotESN, robot.Conn)
+	if delay > 0 {
+		deferTask(task, reason, delay)
+		return
+	}
 	if battResp.IsOnChargerPlatform {
 		_, err := robot.Conn.DriveOffCharger(ctx, &vectorpb.DriveOffChargerRequest{})
 		if err != nil {
@@ -425,7 +415,7 @@ func processTask(task Task) {
 		return
 	}
 	if !facePersonForReminder(ctx, robot, task.RobotESN) {
-		logger.Println("Productivity: Reminder presentation canceled because wheel stop could not be confirmed")
+		logger.Println("Productivity: Reminder presentation canceled because the approach was interrupted")
 		rescheduleAbortedTask(task, robot, "reminder approach was interrupted")
 		return
 	}
@@ -923,6 +913,10 @@ scanLoop:
 		return true
 	}
 	logger.Println("Productivity: Facing person for reminder")
+	if _, delay, reason := checkReminderReadiness(ctx, esn, robot.Conn); delay > 0 {
+		logger.Println("Productivity: Canceling reminder approach: " + reason)
+		return false
+	}
 	return driveStraightForReminder(ctx, robot)
 }
 

@@ -22,6 +22,13 @@ Vector briefly reconnects, then Rocket
 Pod reports the connection-test result. Existing connection files are backed up,
 and the uploaded SSH key is not saved.
 
+## Reminder reconnect delay
+
+Reminders wait for 60 seconds of fresh, healthy battery readings after Vector
+reconnects or Rocket Pod starts. Offline, unknown, low, or uninitialized battery
+readings keep reminders pending. Rocket Pod checks the battery again immediately
+before leaving the charger and before approaching for a reminder.
+
 ## Wiki
 
 Check out the [wiki](https://github.com/kercre123/wire-pod/wiki) for more information on the upstream project, installation, troubleshooting, development, and generally helpful tips.

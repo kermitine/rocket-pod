@@ -213,7 +213,7 @@ func InjectTestNBAUpdate(robotESN string) error {
 		return fmt.Errorf("render score display: %w", err)
 	}
 	away, home, _ := nbaGameTeams(game)
-	phrase := fmt.Sprintf("NBA score update. %s, %s. %s, %s. %s.", spokenNBATeamName(away), away.Score, spokenNBATeamName(home), home.Score, spokenNBAGameDetail(game.Status.Type.ShortDetail))
+	phrase := fmt.Sprintf("NBA score update. %s, %s. %s, %s. %s.", spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score), spokenNBAGameDetail(game.Status.Type.ShortDetail))
 	task := Task{
 		ID:                      fmt.Sprintf("nba_test_%d", time.Now().UnixNano()),
 		RobotESN:                robotESN,
@@ -263,7 +263,7 @@ func InjectTestNBAFinalUpdate(robotESN string) error {
 		return fmt.Errorf("render top performer display: %w", err)
 	}
 	away, home, _ := nbaGameTeams(game)
-	phrase := fmt.Sprintf("Final NBA score. %s, %s. %s, %s.", spokenNBATeamName(away), away.Score, spokenNBATeamName(home), home.Score)
+	phrase := fmt.Sprintf("Final NBA score. %s, %s. %s, %s.", spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score))
 	task := Task{
 		ID:                      fmt.Sprintf("nba_final_test_%d", time.Now().UnixNano()),
 		RobotESN:                robotESN,
@@ -804,12 +804,12 @@ func nbaNotificationForGame(game nbaEvent, config vars.NBAConfig, now time.Time)
 			if detail == "" {
 				detail = game.Status.Type.Detail
 			}
-			phrase := fmt.Sprintf("NBA score update. %s, %s. %s, %s. %s.", spokenNBATeamName(away), scoreOrZero(away.Score), spokenNBATeamName(home), scoreOrZero(home.Score), spokenNBAGameDetail(detail))
+			phrase := fmt.Sprintf("NBA score update. %s, %s. %s, %s. %s.", spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score), spokenNBAGameDetail(detail))
 			return "live", phrase, true
 		}
 	case "post":
 		if config.NotifyFinal && !nbaFinalNotified[game.ID] {
-			phrase := fmt.Sprintf("Final NBA score. %s, %s. %s, %s.", spokenNBATeamName(away), scoreOrZero(away.Score), spokenNBATeamName(home), scoreOrZero(home.Score))
+			phrase := fmt.Sprintf("Final NBA score. %s, %s. %s, %s.", spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score))
 			return "final", phrase, true
 		}
 	}
@@ -844,15 +844,15 @@ func nbaNotableMoment(game nbaEvent, away, home nbaCompetitor) (string, bool) {
 	if previous.Leader != "" && previous.Leader != leader {
 		switch leader {
 		case "away":
-			return fmt.Sprintf("NBA Alert. The %s have taken the lead, %d to %d. %s.", spokenNBATeamName(away), awayScore, homeScore, spokenNBAGameDetail(detail)), true
+			return fmt.Sprintf("NBA Alert. The %s have taken the lead, %s to %s. %s.", spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBAScore(home.Score), spokenNBAGameDetail(detail)), true
 		case "home":
-			return fmt.Sprintf("NBA Alert. The %s have taken the lead, %d to %d. %s.", spokenNBATeamName(home), homeScore, awayScore, spokenNBAGameDetail(detail)), true
+			return fmt.Sprintf("NBA Alert. The %s have taken the lead, %s to %s. %s.", spokenNBATeamName(home), spokenNBAScore(home.Score), spokenNBAScore(away.Score), spokenNBAGameDetail(detail)), true
 		case "tie":
-			return fmt.Sprintf("NBA Alert. The game is tied at %d. %s.", awayScore, spokenNBAGameDetail(detail)), true
+			return fmt.Sprintf("NBA Alert. The game is tied at %s. %s.", spokenNBAScore(away.Score), spokenNBAGameDetail(detail)), true
 		}
 	}
 	if clutch && !previous.ClutchNotified {
-		return fmt.Sprintf("NBA Alert. Close game. %s, %d. %s, %d. %s.", spokenNBATeamName(away), awayScore, spokenNBATeamName(home), homeScore, spokenNBAGameDetail(detail)), true
+		return fmt.Sprintf("NBA Alert. Close game. %s, %s. %s, %s. %s.", spokenNBATeamName(away), spokenNBAScore(away.Score), spokenNBATeamName(home), spokenNBAScore(home.Score), spokenNBAGameDetail(detail)), true
 	}
 	return "", false
 }
@@ -1075,6 +1075,32 @@ func scoreOrZero(score string) string {
 		return "0"
 	}
 	return score
+}
+
+func spokenNBAScore(score string) string {
+	score = strings.TrimSpace(scoreOrZero(score))
+	points, err := strconv.Atoi(score)
+	if err != nil || points < 100 || points > 999 {
+		return score
+	}
+	small := [...]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"}
+	prefix := small[points/100] + " "
+	remainder := points % 100
+	switch {
+	case remainder == 0:
+		return prefix + "hundred"
+	case remainder < 10:
+		return prefix + "oh " + small[remainder]
+	case remainder < 20:
+		return prefix + small[remainder]
+	default:
+		tens := [...]string{"", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"}
+		spoken := prefix + tens[remainder/10]
+		if units := remainder % 10; units != 0 {
+			spoken += " " + small[units]
+		}
+		return spoken
+	}
 }
 
 func spokenNBAGameDetail(detail string) string {

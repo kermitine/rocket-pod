@@ -75,6 +75,7 @@ func schedulerLoop() {
 	bedtimeCtx, stopBedtime := context.WithCancel(context.Background())
 	defer stopBedtime()
 	go bedtimeLoop(bedtimeCtx)
+	go reminderConnectionLoop(bedtimeCtx)
 	ticker := time.NewTicker(30 * time.Second)
 	externalApiTicker := time.NewTicker(5 * time.Minute)
 	nbaTicker := time.NewTicker(time.Minute)
