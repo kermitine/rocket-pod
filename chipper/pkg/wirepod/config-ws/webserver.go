@@ -349,6 +349,12 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	if f1Config.LiveUpdateMinutes > 60 {
 		f1Config.LiveUpdateMinutes = 60
 	}
+	if f1Config.SkipUnchangedTop < 0 {
+		f1Config.SkipUnchangedTop = 0
+	}
+	if f1Config.SkipUnchangedTop > 10 {
+		f1Config.SkipUnchangedTop = 10
+	}
 	if f1Config.QualifyingLiveUpdateMinutes < 1 {
 		f1Config.QualifyingLiveUpdateMinutes = f1Config.LiveUpdateMinutes
 	}

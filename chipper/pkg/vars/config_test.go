@@ -27,6 +27,7 @@ func TestWriteConfigToDiskWithErrorPersistsEmptyReminders(t *testing.T) {
 		NotifyNotable:     true,
 	}
 	APIConfig.Productivity.F1 = F1Config{Enable: true, PregameMinutes: 60, LiveUpdateMinutes: 10, QualifyingLiveUpdateMinutes: 6, PracticeLiveUpdateMinutes: 3, NotifyFinal: true, NotifyQualifying: true, NotifyPractice: true, NotifyNotable: true}
+	APIConfig.Productivity.F1.SkipUnchangedTop = 3
 	APIConfig.Productivity.Bedtime = BedtimeConfig{Enable: true, Start: "21:30", End: "07:15", Timezone: "America/Los_Angeles"}
 
 	if err := WriteConfigToDiskWithError(); err != nil {
@@ -49,7 +50,7 @@ func TestWriteConfigToDiskWithErrorPersistsEmptyReminders(t *testing.T) {
 	if !persisted.Productivity.NBA.Enable || len(persisted.Productivity.NBA.FavoriteTeams) != 2 || !persisted.Productivity.NBA.NotifyFinal || !persisted.Productivity.NBA.NotifyNotable {
 		t.Fatalf("NBA config was not persisted: %#v", persisted.Productivity.NBA)
 	}
-	if !persisted.Productivity.F1.Enable || persisted.Productivity.F1.LiveUpdateMinutes != 10 || persisted.Productivity.F1.QualifyingLiveUpdateMinutes != 6 || persisted.Productivity.F1.PracticeLiveUpdateMinutes != 3 || !persisted.Productivity.F1.NotifyFinal || !persisted.Productivity.F1.NotifyQualifying || !persisted.Productivity.F1.NotifyPractice || !persisted.Productivity.F1.NotifyNotable {
+	if !persisted.Productivity.F1.Enable || persisted.Productivity.F1.LiveUpdateMinutes != 10 || persisted.Productivity.F1.SkipUnchangedTop != 3 || persisted.Productivity.F1.QualifyingLiveUpdateMinutes != 6 || persisted.Productivity.F1.PracticeLiveUpdateMinutes != 3 || !persisted.Productivity.F1.NotifyFinal || !persisted.Productivity.F1.NotifyQualifying || !persisted.Productivity.F1.NotifyPractice || !persisted.Productivity.F1.NotifyNotable {
 		t.Fatalf("F1 config was not persisted: %#v", persisted.Productivity.F1)
 	}
 	if persisted.Productivity.Bedtime != APIConfig.Productivity.Bedtime {

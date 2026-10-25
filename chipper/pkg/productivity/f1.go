@@ -89,6 +89,7 @@ var (
 	f1PregameNotified  = make(map[string]bool)
 	f1FinalNotified    = make(map[string]bool)
 	f1LastLiveUpdate   = make(map[string]time.Time)
+	f1LastRaceOrder    = make(map[string][]string)
 	f1NotableSnapshots = make(map[string]f1NotableSnapshot)
 )
 
@@ -135,6 +136,7 @@ func resetF1NotificationState() {
 	f1PregameNotified = make(map[string]bool)
 	f1FinalNotified = make(map[string]bool)
 	f1LastLiveUpdate = make(map[string]time.Time)
+	f1LastRaceOrder = make(map[string][]string)
 	f1NotableSnapshots = make(map[string]f1NotableSnapshot)
 }
 
@@ -289,6 +291,9 @@ func checkF1Races() {
 			select {
 			case taskQueue <- Task{ID: "f1_" + session.ID + "_" + kind, RobotESN: target, Pages: pages, Source: "f1", configurationGeneration: currentConfigurationGeneration()}:
 				markF1Notified(session.ID, kind, now)
+				if strings.EqualFold(session.Type.Abbreviation, "Race") && (kind == "live" || kind == "leader") {
+					f1LastRaceOrder[session.ID] = f1RaceOrder(session)
+				}
 				logger.Println("Productivity: Queued F1 " + f1SessionName(session) + " " + kind + " update for session " + session.ID)
 			default:
 				logger.Println("Productivity: Queue full, skipping F1 update for session " + session.ID)
@@ -385,6 +390,9 @@ func f1NotificationForSession(session f1Competition, config vars.F1Config, now t
 	case "in":
 		interval := time.Duration(f1LiveUpdateMinutes(session, config)) * time.Minute
 		if len(session.Competitors) > 0 && (f1LastLiveUpdate[session.ID].IsZero() || now.Sub(f1LastLiveUpdate[session.ID]) >= interval) {
+			if f1RaceTopUnchanged(session, config.SkipUnchangedTop) {
+				return "", false
+			}
 			return "live", true
 		}
 	case "post":
@@ -406,6 +414,35 @@ func f1LiveUpdateMinutes(session f1Competition, config vars.F1Config) int {
 		return 10
 	}
 	return minutes
+}
+
+func f1RaceOrder(session f1Competition) []string {
+	top := f1TopTen(session)
+	order := make([]string, 0, len(top))
+	for index, driver := range top {
+		key := f1DriverSnapshotKey(driver)
+		if driver.Order != index+1 || key == "" {
+			break
+		}
+		order = append(order, key)
+	}
+	return order
+}
+
+func f1RaceTopUnchanged(session f1Competition, limit int) bool {
+	if limit <= 0 || limit > 10 || !strings.EqualFold(session.Type.Abbreviation, "Race") {
+		return false
+	}
+	previous, current := f1LastRaceOrder[session.ID], f1RaceOrder(session)
+	if len(previous) < limit || len(current) < limit {
+		return false
+	}
+	for index := 0; index < limit; index++ {
+		if previous[index] != current[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func f1NotableMoment(session f1Competition) (string, bool) {

@@ -179,6 +179,7 @@ type F1Config struct {
 	Enable                      bool `json:"enable"`
 	PregameMinutes              int  `json:"pregame_minutes"`
 	LiveUpdateMinutes           int  `json:"live_update_minutes"`
+	SkipUnchangedTop            int  `json:"skip_unchanged_top"`
 	QualifyingLiveUpdateMinutes int  `json:"qualifying_live_update_minutes"`
 	PracticeLiveUpdateMinutes   int  `json:"practice_live_update_minutes"`
 	NotifyFinal                 bool `json:"notify_final"`

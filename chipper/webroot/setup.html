@@ -401,6 +401,18 @@
 		        <span>minutes between race updates</span>
 		      </div>
 
+		      <label for="f1SkipUnchanged">Unchanged Race Updates</label>
+		      <div>
+		        <input type="checkbox" id="f1SkipUnchanged" onchange="toggleF1UnchangedSettings()" aria-describedby="f1SkipUnchangedDesc">
+		        <label class="checkbox-label" for="f1SkipUnchanged">Skip updates when the top drivers are unchanged</label>
+		        <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+		          <label for="f1SkipUnchangedTop">Compare top</label>
+		          <input id="f1SkipUnchangedTop" type="number" min="1" max="10" value="3" class="tinput" style="width:90px;" disabled>
+		          <span>drivers, in the same order</span>
+		        </div>
+		        <small id="f1SkipUnchangedDesc" class="desc" style="display:block; margin-top:8px;">Compares with the last race update. Final results and notable-moment alerts still play.</small>
+		      </div>
+
 		      <label for="f1QualifyingLiveUpdateMinutes">Qualifying Live Leaderboard</label>
 		      <div style="display:flex; align-items:center; gap:8px;">
 		        <input id="f1QualifyingLiveUpdateMinutes" type="number" min="1" max="60" value="10" class="tinput" style="width:90px;">

@@ -7,7 +7,7 @@ let reminderCounter = 0;
 let productivityImageLibrary = [];
 
 // VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
-const ROCKET_POD_VERSION = "V67";
+const ROCKET_POD_VERSION = "V68";
 
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
@@ -579,11 +579,16 @@ function toggleF1Settings() {
   getE("f1Settings").style.display = getE("f1Enable").checked ? "block" : "none";
 }
 
+function toggleF1UnchangedSettings() {
+  getE("f1SkipUnchangedTop").disabled = !getE("f1SkipUnchanged").checked;
+}
+
 function collectF1ConfigData() {
   return {
     enable: getE("f1Enable").checked,
     pregame_minutes: parseInt(getE("f1PregameMinutes").value) || 60,
     live_update_minutes: parseInt(getE("f1LiveUpdateMinutes").value) || 10,
+    skip_unchanged_top: getE("f1SkipUnchanged").checked ? Math.max(1, Math.min(10, parseInt(getE("f1SkipUnchangedTop").value) || 3)) : 0,
     qualifying_live_update_minutes: parseInt(getE("f1QualifyingLiveUpdateMinutes").value) || 10,
     practice_live_update_minutes: parseInt(getE("f1PracticeLiveUpdateMinutes").value) || 10,
     notify_final: getE("f1NotifyFinal").checked,
@@ -1034,6 +1039,9 @@ function updateProductivityAPI() {
               getE("f1Enable").checked = f1.enable === true;
               getE("f1PregameMinutes").value = f1.pregame_minutes || 60;
               getE("f1LiveUpdateMinutes").value = f1.live_update_minutes || 10;
+              getE("f1SkipUnchanged").checked = f1.skip_unchanged_top > 0;
+              getE("f1SkipUnchangedTop").value = f1.skip_unchanged_top > 0 ? Math.min(10, f1.skip_unchanged_top) : 3;
+              toggleF1UnchangedSettings();
               getE("f1QualifyingLiveUpdateMinutes").value = f1.qualifying_live_update_minutes || f1.live_update_minutes || 10;
               getE("f1PracticeLiveUpdateMinutes").value = f1.practice_live_update_minutes || f1.live_update_minutes || 10;
               getE("f1NotifyFinal").checked = f1.notify_final !== false;
