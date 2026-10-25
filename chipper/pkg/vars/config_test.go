@@ -17,6 +17,7 @@ func TestWriteConfigToDiskWithErrorPersistsEmptyReminders(t *testing.T) {
 
 	ApiConfigPath = filepath.Join(t.TempDir(), "apiConfig.json")
 	APIConfig.Productivity.ManualConfig = "[]"
+	APIConfig.Productivity.ReverseFaceSearch = true
 	APIConfig.Productivity.NBA = NBAConfig{
 		Enable:            true,
 		FavoriteTeams:     []string{"LAL", "BOS"},
@@ -41,6 +42,9 @@ func TestWriteConfigToDiskWithErrorPersistsEmptyReminders(t *testing.T) {
 	}
 	if persisted.Productivity.ManualConfig != "[]" {
 		t.Fatalf("manual_config = %q, want []", persisted.Productivity.ManualConfig)
+	}
+	if !persisted.Productivity.ReverseFaceSearch {
+		t.Fatal("reverse face-search direction was not persisted")
 	}
 	if !persisted.Productivity.NBA.Enable || len(persisted.Productivity.NBA.FavoriteTeams) != 2 || !persisted.Productivity.NBA.NotifyFinal || !persisted.Productivity.NBA.NotifyNotable {
 		t.Fatalf("NBA config was not persisted: %#v", persisted.Productivity.NBA)

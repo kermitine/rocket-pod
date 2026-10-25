@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
@@ -258,6 +259,14 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	targetRobot := r.FormValue("target_robot")
+	reverseFaceSearch := vars.APIConfig.Productivity.ReverseFaceSearch
+	if raw := strings.TrimSpace(r.FormValue("reverse_face_search")); raw != "" {
+		reverseFaceSearch, err = strconv.ParseBool(raw)
+		if err != nil {
+			http.Error(w, "Invalid face-search direction", http.StatusBadRequest)
+			return
+		}
+	}
 	timezone := strings.TrimSpace(r.FormValue("timezone"))
 	nbaConfigStr := strings.TrimSpace(r.FormValue("nba_config"))
 	f1ConfigStr := strings.TrimSpace(r.FormValue("f1_config"))
@@ -360,6 +369,7 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	vars.APIConfig.Productivity.Username = strings.TrimSpace(username)
 	vars.APIConfig.Productivity.Password = strings.TrimSpace(password)
 	vars.APIConfig.Productivity.TargetRobot = strings.TrimSpace(targetRobot)
+	vars.APIConfig.Productivity.ReverseFaceSearch = reverseFaceSearch
 	vars.APIConfig.Productivity.Timezone = timezone
 	vars.APIConfig.Productivity.ManualConfig = manualConfig
 	vars.APIConfig.Productivity.NBA = nbaConfig

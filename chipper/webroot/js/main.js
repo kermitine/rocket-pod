@@ -7,7 +7,7 @@ let reminderCounter = 0;
 let productivityImageLibrary = [];
 
 // VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
-const ROCKET_POD_VERSION = "V65";
+const ROCKET_POD_VERSION = "V67";
 
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
@@ -960,6 +960,7 @@ function sendProductivityAPIKey(statusElementId = "addProductivityProviderAPISta
   const formData = new FormData();
   formData.append("provider", provider);
   formData.append("target_robot", getE("targetBot").value);
+  formData.append("reverse_face_search", getE("reverseFaceSearch").checked);
   formData.append("key", getE("prodApiKey").value);
   formData.append("timezone", Intl.DateTimeFormat().resolvedOptions().timeZone || "");
   
@@ -1008,6 +1009,7 @@ function updateProductivityAPI() {
           if (data) {
               getE("todoistEnable").checked = (data.provider === "todoist");
               getE("prodApiKey").value = data.key || "";
+              getE("reverseFaceSearch").checked = data.reverse_face_search === true;
               
               if (data.target_robot) {
                   getE("targetBot").value = data.target_robot;

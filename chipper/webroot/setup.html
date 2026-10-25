@@ -217,6 +217,12 @@
                     <small class="desc" style="display:block; margin-bottom:20px;">Select the robot for reminders, sports updates, and bedtime.</small>
 
                     <div style="margin-bottom: 15px;">
+                        <input type="checkbox" id="reverseFaceSearch" aria-describedby="reverseFaceSearchDesc">
+                        <label class="checkbox-label" for="reverseFaceSearch">Reverse face-search spin direction</label>
+                        <small id="reverseFaceSearchDesc" class="desc" style="display:block;">Leave off to keep the current direction. Applies to reminders and sports updates.</small>
+                    </div>
+
+                    <div style="margin-bottom: 15px;">
                         <input type="checkbox" id="todoistEnable" onchange="checkProductivity()">
                         <label class="checkbox-label" for="todoistEnable">Use Todoist API</label>
                     </div>

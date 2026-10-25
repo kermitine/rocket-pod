@@ -144,18 +144,19 @@ type botjdoc struct {
 }
 
 type ProductivityConfig struct {
-	Enable       bool          `json:"enable"`
-	Provider     string        `json:"provider"`
-	Key          string        `json:"key"`
-	Url          string        `json:"url"`
-	Username     string        `json:"username"`
-	Password     string        `json:"password"`
-	TargetRobot  string        `json:"target_robot"`
-	Timezone     string        `json:"timezone"`
-	ManualConfig string        `json:"manual_config"`
-	NBA          NBAConfig     `json:"nba"`
-	F1           F1Config      `json:"f1"`
-	Bedtime      BedtimeConfig `json:"bedtime"`
+	Enable            bool          `json:"enable"`
+	Provider          string        `json:"provider"`
+	Key               string        `json:"key"`
+	Url               string        `json:"url"`
+	Username          string        `json:"username"`
+	Password          string        `json:"password"`
+	TargetRobot       string        `json:"target_robot"`
+	ReverseFaceSearch bool          `json:"reverse_face_search"`
+	Timezone          string        `json:"timezone"`
+	ManualConfig      string        `json:"manual_config"`
+	NBA               NBAConfig     `json:"nba"`
+	F1                F1Config      `json:"f1"`
+	Bedtime           BedtimeConfig `json:"bedtime"`
 }
 
 type BedtimeConfig struct {

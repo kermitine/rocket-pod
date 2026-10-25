@@ -343,11 +343,20 @@ func TestFaceObservationDoesNotRequireMappedPose(t *testing.T) {
 	}
 }
 
-func TestFaceScanCoversFourHundredSixtyDegrees(t *testing.T) {
-	totalAngle := reminderFaceScanStepAngle * reminderFaceScanMaxSteps
-	wantAngle := 460 * math.Pi / 180
-	if math.Abs(totalAngle-wantAngle) > 0.000001 {
-		t.Fatalf("face scan angle = %v, want 460 degrees", totalAngle)
+func TestFaceScanDirectionPreservesCoverageAndSpeed(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		request := reminderFaceScanRequest(reverse)
+		totalAngle := float64(request.AngleRad) * reminderFaceScanMaxSteps
+		wantAngle := 460 * math.Pi / 180
+		if reverse {
+			wantAngle = -wantAngle
+		}
+		if math.Abs(totalAngle-wantAngle) > 0.000001 {
+			t.Fatalf("reverse=%v: face scan angle = %v, want %v", reverse, totalAngle, wantAngle)
+		}
+		if request.SpeedRadPerSec != reminderFaceScanSpeed || request.AccelRadPerSec2 != 1.5 || request.IdTag != reminderFaceScanActionTag || request.NumRetries != 0 {
+			t.Fatalf("reverse=%v: face scan motion settings changed: %#v", reverse, request)
+		}
 	}
 }
 

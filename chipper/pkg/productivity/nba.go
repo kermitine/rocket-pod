@@ -68,6 +68,19 @@ type nbaSummary struct {
 	Boxscore struct {
 		Players []nbaBoxscoreTeam `json:"players"`
 	} `json:"boxscore"`
+	Injuries []nbaTeamInjuries `json:"injuries"`
+}
+
+type nbaTeamInjuries struct {
+	Injuries []nbaInjury `json:"injuries"`
+}
+
+type nbaInjury struct {
+	Status  string `json:"status"`
+	Athlete struct {
+		LastName    string `json:"lastName"`
+		DisplayName string `json:"displayName"`
+	} `json:"athlete"`
 }
 
 type nbaBoxscoreTeam struct {
@@ -449,6 +462,16 @@ func checkNBAGames() {
 			markNBANotified(game.ID, kind, now)
 			continue
 		}
+		if kind == "pregame" {
+			injuryCtx, injuryCancel := context.WithTimeout(ctx, 5*time.Second)
+			summary, injuryErr := fetchNBASummary(injuryCtx, game.ID)
+			injuryCancel()
+			if injuryErr != nil {
+				logger.Println("Productivity: NBA injury report unavailable for game " + game.ID + ": " + injuryErr.Error())
+			} else if report := nbaInjuryReport(summary); report != "" {
+				phrase += " " + report
+			}
+		}
 		faceData, renderErr := renderNBAScoreFace(ctx, game, now.Location())
 		if renderErr != nil {
 			logger.Println("Productivity: NBA score image failed: " + renderErr.Error())
@@ -534,6 +557,39 @@ func fetchNBASummary(ctx context.Context, gameID string) (nbaSummary, error) {
 		return nbaSummary{}, err
 	}
 	return summary, nil
+}
+
+func nbaInjuryReport(summary nbaSummary) string {
+	var out, gametime []string
+	for _, team := range summary.Injuries {
+		for _, injury := range team.Injuries {
+			name := strings.TrimSpace(injury.Athlete.LastName)
+			if name == "" {
+				parts := strings.Fields(injury.Athlete.DisplayName)
+				if len(parts) > 1 {
+					parts = parts[1:]
+				}
+				name = strings.Join(parts, " ")
+			}
+			if name == "" {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(injury.Status)) {
+			case "out":
+				out = append(out, name)
+			case "day-to-day", "questionable", "doubtful", "game time decision", "game-time decision", "gtd":
+				gametime = append(gametime, name)
+			}
+		}
+	}
+	var parts []string
+	if len(out) > 0 {
+		parts = append(parts, strings.TrimSuffix("OUT: "+strings.Join(out, ", "), ".")+".")
+	}
+	if len(gametime) > 0 {
+		parts = append(parts, strings.TrimSuffix("Gametime: "+strings.Join(gametime, ", "), ".")+".")
+	}
+	return strings.Join(parts, " ")
 }
 
 func fetchRandomNBAStarter(ctx context.Context, rng *rand.Rand, now time.Time) (string, nbaTopPerformer, error) {

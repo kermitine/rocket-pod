@@ -669,6 +669,20 @@ func reminderFaceSearchAnimationRequest() *vectorpb.PlayAnimationRequest {
 	}
 }
 
+func reminderFaceScanRequest(reverse bool) *vectorpb.TurnInPlaceRequest {
+	angle := float32(reminderFaceScanStepAngle)
+	if reverse {
+		angle = -angle
+	}
+	return &vectorpb.TurnInPlaceRequest{
+		AngleRad:        angle,
+		SpeedRadPerSec:  reminderFaceScanSpeed,
+		AccelRadPerSec2: 1.5,
+		IdTag:           reminderFaceScanActionTag,
+		NumRetries:      0,
+	}
+}
+
 func playReminderFaceSearchAnimation(ctx context.Context, robot *vector.Vector) error {
 	response, err := robot.Conn.PlayAnimation(ctx, reminderFaceSearchAnimationRequest())
 	if err != nil {
@@ -771,6 +785,7 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector, esn string
 
 	// Give face detection a moment before beginning the scan. Each turn is a
 	// small, completed action, so observing a face prevents any further turns.
+	scanRequest := reminderFaceScanRequest(vars.APIConfig.Productivity.ReverseFaceSearch)
 	warmupTimer := time.NewTimer(reminderInitialFaceCheck)
 	select {
 	case <-faceSeen:
@@ -787,13 +802,7 @@ scanLoop:
 		if searchCtx.Err() != nil {
 			break
 		}
-		turnResponse, err := robot.Conn.TurnInPlace(searchCtx, &vectorpb.TurnInPlaceRequest{
-			AngleRad:        float32(reminderFaceScanStepAngle),
-			SpeedRadPerSec:  reminderFaceScanSpeed,
-			AccelRadPerSec2: 1.5,
-			IdTag:           reminderFaceScanActionTag,
-			NumRetries:      0,
-		})
+		turnResponse, err := robot.Conn.TurnInPlace(searchCtx, scanRequest)
 		if err != nil {
 			if searchCtx.Err() == nil {
 				logger.Println("Productivity: Face scan turn failed; continuing: " + err.Error())
