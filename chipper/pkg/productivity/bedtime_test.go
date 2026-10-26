@@ -292,6 +292,7 @@ func TestNativeBedtimePulseReleasesSleepForInteractionAndCancellation(t *testing
 						http.Error(w, "failed", http.StatusServiceUnavailable)
 					}
 				}
+				fmt.Fprint(w, value, "<br>\n")
 			}))
 			defer server.Close()
 			start := time.Now()
@@ -333,7 +334,7 @@ func TestNativeBedtimePulseRetriesRelease(t *testing.T) {
 			}
 			enabled = false
 		}
-		fmt.Fprint(w, "OK")
+		fmt.Fprint(w, r.URL.Query().Get("value"), "<br>\n")
 	}))
 	defer server.Close()
 	if err := pulseNativeBedtimeSleep(context.Background(), server.Client(), server.URL+"?value=", esn); err != nil {
@@ -343,6 +344,87 @@ func TestNativeBedtimePulseRetriesRelease(t *testing.T) {
 	defer mu.Unlock()
 	if enabled || releases != 3 {
 		t.Fatalf("sleep flag was not released after retries: enabled=%v, attempts=%d", enabled, releases)
+	}
+}
+
+func TestNativeBedtimeSleepUsesEngineConsoleAndPublicVariableName(t *testing.T) {
+	var values []string
+	client := &http.Client{Transport: bedtimeScoreboardTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host != "192.0.2.1:8888" || request.URL.Path != "/consolevarset" || request.URL.Query().Get("key") != "SleepCycleForceSleep" {
+			// Vector returns 200 with this error for the wrong port or the
+			// C++ name kSleepCycleForceSleep, rather than a failing HTTP code.
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("Variable not found<br>\n"))}, nil
+		}
+		value := request.URL.Query().Get("value")
+		values = append(values, value)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(value + "<br>\n"))}, nil
+	})}
+	if err := pulseNativeBedtimeSleep(context.Background(), client, nativeBedtimeSleepURL("192.0.2.1"), "native-sleep-engine"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(values, []string{"false", "true", "false"}) {
+		t.Fatalf("native sleep was not enabled and released on the behavior engine: %v", values)
+	}
+	if got := nativeBedtimeSleepURL("2001:db8::1"); !strings.HasPrefix(got, "http://[2001:db8::1]:8888/") {
+		t.Fatalf("invalid IPv6 console URL: %s", got)
+	}
+}
+
+func TestNativeBedtimeSleepChecksConsoleResponseBody(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		body    string
+		enabled bool
+		wantErr bool
+	}{
+		{"enabled", "true<br>\n", true, false},
+		{"disabled", "false<br>\n", false, false},
+		{"numeric enabled", "1<br>\n", true, false},
+		{"numeric disabled", "0<br>\n", false, false},
+		{"missing variable", "Variable not found kSleepCycleForceSleep<br>\n", true, true},
+		{"parse error", "Error setting variable SleepCycleForceSleep=true<br>\n", true, true},
+		{"wrong value", "false<br>\n", true, true},
+		{"release failed", "true<br>\n", false, true},
+		{"empty", "", true, true},
+		{"HTML page", "<!doctype html><html>Console</html>", true, true},
+		{"oversize", strings.Repeat("x", 4097), true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &http.Client{Transport: bedtimeScoreboardTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(test.body))}, nil
+			})}
+			err := setNativeBedtimeSleep(context.Background(), client, nativeBedtimeSleepURL("192.0.2.1"), test.enabled)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("console response %q: error=%v, want error=%v", test.body, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestNativeBedtimePulseRetriesUnconfirmedRelease(t *testing.T) {
+	const esn = "pulse-release-body-error"
+	enabled, releases := false, 0
+	client := &http.Client{Transport: bedtimeScoreboardTransport(func(request *http.Request) (*http.Response, error) {
+		value := request.URL.Query().Get("value")
+		body := value + "<br>\n"
+		if value == "true" {
+			enabled = true
+			recordBedtimeInteraction(esn, 0, time.Now())
+		} else if enabled {
+			releases++
+			if releases < 3 {
+				body = "Error setting variable SleepCycleForceSleep=false<br>\n"
+			} else {
+				enabled = false
+			}
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	if err := pulseNativeBedtimeSleep(context.Background(), client, nativeBedtimeSleepURL("192.0.2.1"), esn); err != nil {
+		t.Fatal(err)
+	}
+	if enabled || releases != 3 {
+		t.Fatalf("sleep control was left enabled after HTTP 200 errors: enabled=%v, attempts=%d", enabled, releases)
 	}
 }
 

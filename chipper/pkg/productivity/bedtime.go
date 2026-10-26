@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -281,12 +282,14 @@ func runBedtimeSession(ctx context.Context, config bedtimeConfiguration) error {
 		}
 	}()
 
-	consoleURL := "http://" + net.JoinHostPort(ip, "8889") + "/consolevarset?key=kSleepCycleForceSleep&value="
+	consoleURL := nativeBedtimeSleepURL(ip)
 	client := &http.Client{Timeout: bedtimeRequestTimeout}
 	defer client.CloseIdleConnections()
 	// Clear a pulse interrupted by a previous server restart. Never latch this
 	// flag overnight: voice and touch must still work if Rocket Pod disconnects.
-	setNativeBedtimeSleep(context.Background(), client, consoleURL, false)
+	if err := setNativeBedtimeSleep(ctx, client, consoleURL, false); err != nil && ctx.Err() == nil {
+		logger.Println("Bedtime: Could not clear native sleep control: " + err.Error())
+	}
 	ticker := time.NewTicker(bedtimeCheckInterval)
 	defer ticker.Stop()
 	enforcer := bedtimeEnforcer{robot: robot, client: client, consoleURL: consoleURL, esn: config.RobotESN}
@@ -356,7 +359,8 @@ func (enforcer *bedtimeEnforcer) check(ctx context.Context, state *vectorpb.Robo
 		enforcer.lastHome = time.Time{}
 	}
 	if now.Sub(enforcer.lastSleep) >= bedtimeSleepRetry {
-		if enforcer.lastSleep.IsZero() {
+		firstAttempt := enforcer.lastSleep.IsZero()
+		if firstAttempt {
 			logger.Println("Bedtime: Requesting native sleep for " + enforcer.esn)
 		}
 		if err := pulseNativeBedtimeSleep(ctx, enforcer.client, enforcer.consoleURL, enforcer.esn); err != nil {
@@ -372,6 +376,8 @@ func (enforcer *bedtimeEnforcer) check(ctx context.Context, state *vectorpb.Robo
 				}
 				enforcer.lastFallback = now
 			}
+		} else if firstAttempt && ctx.Err() == nil && !bedtimeInteractionActive(enforcer.esn, time.Now()) {
+			logger.Println("Bedtime: Native sleep pulse accepted and released for " + enforcer.esn)
 		}
 		enforcer.lastSleep = now
 	}
@@ -393,6 +399,12 @@ func requestBedtimeCharger(ctx context.Context, robot vectorpb.ExternalInterface
 	}
 }
 
+func nativeBedtimeSleepURL(ip string) string {
+	// SleepCycle belongs to vic-engine (8888), not vic-anim (8889).
+	// The console removes the C++ variable's Hungarian 'k' prefix.
+	return "http://" + net.JoinHostPort(ip, "8888") + "/consolevarset?key=SleepCycleForceSleep&value="
+}
+
 func setNativeBedtimeSleep(ctx context.Context, client *http.Client, consoleURL string, enabled bool) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, consoleURL+fmt.Sprint(enabled), nil)
 	if err != nil {
@@ -403,9 +415,25 @@ func setNativeBedtimeSleep(ctx context.Context, client *http.Client, consoleURL 
 		return err
 	}
 	defer response.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("WireOS sleep control returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
+	if err != nil {
+		return fmt.Errorf("reading WireOS sleep control response: %w", err)
+	}
+	if len(body) > 4096 {
+		return fmt.Errorf("WireOS sleep control response is too large")
+	}
+	// The console also returns HTTP 200 for missing variables and parse errors.
+	// A successful write returns the actual value followed by <br>.
+	feedback := strings.TrimSpace(strings.NewReplacer("<br>", "", "<br/>", "", "<br />", "").Replace(string(body)))
+	actual, err := strconv.ParseBool(feedback)
+	if err != nil || actual != enabled {
+		if len(feedback) > 160 {
+			feedback = feedback[:160] + "..."
+		}
+		return fmt.Errorf("WireOS sleep control did not confirm %t: %q", enabled, feedback)
 	}
 	return nil
 }

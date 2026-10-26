@@ -49,6 +49,9 @@ The logs show the saved schedule, timezone, current local time, whether bedtime
 is active, interaction pauses, and go-home attempts. Native sleep requires the
 robot's sleep console control. If that control is unavailable, Rocket Pod logs
 the failure and keeps him on his charger; it cannot enforce sleep on that firmware.
+Sleep requests use the behavior engine on port 8888 and verify the returned
+`SleepCycleForceSleep` value. The console can return HTTP 200 even when a setting
+does not exist, so the HTTP status alone does not confirm a successful request.
 Morning ends bedtime enforcement without forcing him awake.
 
 ## Wiki
