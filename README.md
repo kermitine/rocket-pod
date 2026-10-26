@@ -36,7 +36,7 @@ search is needed after the queue empties, the target robot or settings change,
 or a delivery is interrupted. Battery and bedtime checks still apply to each
 notification.
 
-In **Productivity**, adjust **Face-search turn speed** from 0.5x to 4.0x and click
+In **Productivity**, adjust **Face-search turn speed** from 0.5x to 8.0x and click
 **Apply Productivity Settings**. The default 1.0x keeps the original speed.
 
 ## Wiki

@@ -7,7 +7,7 @@ let reminderCounter = 0;
 let productivityImageLibrary = [];
 
 // VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
-const ROCKET_POD_VERSION = "V71";
+const ROCKET_POD_VERSION = "V72";
 
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
@@ -1025,7 +1025,7 @@ function updateProductivityAPI() {
               getE("prodApiKey").value = data.key || "";
               getE("reverseFaceSearch").checked = data.reverse_face_search === true;
               const faceSearchSpeed = Number(data.face_search_speed_multiplier) || 1;
-              getE("faceSearchSpeed").value = faceSearchSpeed >= 0.5 && faceSearchSpeed <= 4 ? faceSearchSpeed : 1;
+              getE("faceSearchSpeed").value = faceSearchSpeed >= 0.5 && faceSearchSpeed <= 8 ? faceSearchSpeed : 1;
               updateFaceSearchSpeedLabel();
               
               if (data.target_robot) {

@@ -361,7 +361,7 @@ func TestFaceScanDirectionPreservesCoverageAndSpeed(t *testing.T) {
 }
 
 func TestFaceScanSpeedScalesTurnsWithoutChangingTheirDirectionOrSize(t *testing.T) {
-	for _, speed := range []float64{0.5, 1, 1.5, 2, 3, 4} {
+	for _, speed := range []float64{0.5, 1, 1.5, 2, 3, 4, 6, 8} {
 		for _, reverse := range []bool{false, true} {
 			request := reminderFaceScanRequest(reverse, speed)
 			wantAngle := float32(reminderFaceScanStepAngle)
@@ -373,7 +373,7 @@ func TestFaceScanSpeedScalesTurnsWithoutChangingTheirDirectionOrSize(t *testing.
 			}
 		}
 	}
-	for _, speed := range []float64{0, -1, 0.1, 4.1, math.NaN(), math.Inf(1)} {
+	for _, speed := range []float64{0, -1, 0.1, 8.1, math.NaN(), math.Inf(1)} {
 		request := reminderFaceScanRequest(false, speed)
 		if request.SpeedRadPerSec != reminderFaceScanSpeed || request.AccelRadPerSec2 != 1.5 {
 			t.Fatalf("missing/invalid speed %v did not use original motion settings: %#v", speed, request)

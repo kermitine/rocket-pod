@@ -699,8 +699,8 @@ func reminderFaceSearchAnimationRequest() *vectorpb.PlayAnimationRequest {
 }
 
 func ValidateFaceSearchSpeedMultiplier(multiplier float64) error {
-	if !(multiplier >= 0.5 && multiplier <= 4.0) {
-		return fmt.Errorf("Face-search speed must be between 0.5x and 4.0x")
+	if !(multiplier >= 0.5 && multiplier <= 8.0) {
+		return fmt.Errorf("Face-search speed must be between 0.5x and 8.0x")
 	}
 	return nil
 }
