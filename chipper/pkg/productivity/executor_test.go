@@ -345,7 +345,7 @@ func TestFaceObservationDoesNotRequireMappedPose(t *testing.T) {
 
 func TestFaceScanDirectionPreservesCoverageAndSpeed(t *testing.T) {
 	for _, reverse := range []bool{false, true} {
-		request := reminderFaceScanRequest(reverse)
+		request := reminderFaceScanRequest(reverse, 1)
 		totalAngle := float64(request.AngleRad) * reminderFaceScanMaxSteps
 		wantAngle := 460 * math.Pi / 180
 		if reverse {
@@ -356,6 +356,27 @@ func TestFaceScanDirectionPreservesCoverageAndSpeed(t *testing.T) {
 		}
 		if request.SpeedRadPerSec != reminderFaceScanSpeed || request.AccelRadPerSec2 != 1.5 || request.IdTag != reminderFaceScanActionTag || request.NumRetries != 0 {
 			t.Fatalf("reverse=%v: face scan motion settings changed: %#v", reverse, request)
+		}
+	}
+}
+
+func TestFaceScanSpeedScalesTurnsWithoutChangingTheirDirectionOrSize(t *testing.T) {
+	for _, speed := range []float64{0.5, 1, 1.5, 2, 3, 4} {
+		for _, reverse := range []bool{false, true} {
+			request := reminderFaceScanRequest(reverse, speed)
+			wantAngle := float32(reminderFaceScanStepAngle)
+			if reverse {
+				wantAngle = -wantAngle
+			}
+			if request.AngleRad != wantAngle || request.SpeedRadPerSec != float32(speed) || request.AccelRadPerSec2 != float32(1.5*speed*speed) {
+				t.Fatalf("speed=%v, reverse=%v: unexpected turn request: %#v", speed, reverse, request)
+			}
+		}
+	}
+	for _, speed := range []float64{0, -1, 0.1, 4.1, math.NaN(), math.Inf(1)} {
+		request := reminderFaceScanRequest(false, speed)
+		if request.SpeedRadPerSec != reminderFaceScanSpeed || request.AccelRadPerSec2 != 1.5 {
+			t.Fatalf("missing/invalid speed %v did not use original motion settings: %#v", speed, request)
 		}
 	}
 }

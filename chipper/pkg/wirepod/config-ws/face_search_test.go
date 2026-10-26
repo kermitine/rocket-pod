@@ -82,3 +82,78 @@ func TestFaceSearchDirectionSettingsPersistenceAndCompatibility(t *testing.T) {
 		t.Fatal("failed save changed the active face-search direction")
 	}
 }
+
+func TestFaceSearchSpeedSettingsPersistenceAndValidation(t *testing.T) {
+	previous, previousPath := vars.APIConfig.Productivity, vars.ApiConfigPath
+	t.Cleanup(func() {
+		vars.APIConfig.Productivity, vars.ApiConfigPath = previous, previousPath
+		productivity.NotifyConfigUpdated()
+	})
+	vars.APIConfig.Productivity = vars.ProductivityConfig{}
+	vars.ApiConfigPath = filepath.Join(t.TempDir(), "apiConfig.json")
+	requestFor := func(value string) *http.Request {
+		request := bedtimeSettingsRequest(t, "")
+		if err := request.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if value != "" {
+			request.Form.Set("face_search_speed_multiplier", value)
+		}
+		return request
+	}
+	for _, test := range []struct {
+		value  string
+		want   float64
+		status int
+	}{
+		{"", 0, http.StatusOK},
+		{"0.5", 0.5, http.StatusOK},
+		{"1.5", 1.5, http.StatusOK},
+		{"2.0", 2, http.StatusOK},
+		{"2.1", 2.1, http.StatusOK},
+		{"3.0", 3, http.StatusOK},
+		{"4.0", 4, http.StatusOK},
+		{"", 4, http.StatusOK},
+		{"NaN", 4, http.StatusBadRequest},
+		{"Inf", 4, http.StatusBadRequest},
+		{"invalid", 4, http.StatusBadRequest},
+		{"0", 4, http.StatusBadRequest},
+		{"0.4", 4, http.StatusBadRequest},
+		{"4.1", 4, http.StatusBadRequest},
+		{"1.0", 1, http.StatusOK},
+	} {
+		response := httptest.NewRecorder()
+		handleSetProductivityAPI(response, requestFor(test.value))
+		if response.Code != test.status || vars.APIConfig.Productivity.FaceSearchSpeedMultiplier != test.want {
+			t.Fatalf("save %q: status=%d, speed=%v, body=%s", test.value, response.Code, vars.APIConfig.Productivity.FaceSearchSpeedMultiplier, response.Body.String())
+		}
+		data, err := os.ReadFile(vars.ApiConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var persisted struct {
+			Productivity vars.ProductivityConfig `json:"productivity"`
+		}
+		if err := json.Unmarshal(data, &persisted); err != nil {
+			t.Fatal(err)
+		}
+		if persisted.Productivity.FaceSearchSpeedMultiplier != test.want {
+			t.Fatalf("persisted speed=%v, want %v", persisted.Productivity.FaceSearchSpeedMultiplier, test.want)
+		}
+		response = httptest.NewRecorder()
+		handleGetProductivityAPI(response)
+		var settings vars.ProductivityConfig
+		if err := json.Unmarshal(response.Body.Bytes(), &settings); err != nil {
+			t.Fatal(err)
+		}
+		if settings.FaceSearchSpeedMultiplier != test.want {
+			t.Fatal("saved speed was not returned to the UI")
+		}
+	}
+	vars.ApiConfigPath = filepath.Join(t.TempDir(), "missing", "apiConfig.json")
+	response := httptest.NewRecorder()
+	handleSetProductivityAPI(response, requestFor("1.5"))
+	if response.Code != http.StatusInternalServerError || vars.APIConfig.Productivity.FaceSearchSpeedMultiplier != 1 {
+		t.Fatal("failed save changed the active face-search speed")
+	}
+}

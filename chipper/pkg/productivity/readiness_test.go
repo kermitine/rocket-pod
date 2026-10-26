@@ -150,7 +150,7 @@ func TestReconnectedReminderCannotTakeControlOnAnEarlyNominalReading(t *testing.
 	observeHealthyReminder(&reminderConnections, esn, now.Add(-2*time.Minute), now.Add(-time.Minute))
 	reminderConnections.observe(esn, nil, errors.New("robot was offline"), now.Add(-time.Second))
 	client := &readinessRobotClient{batteries: []*vectorpb.BatteryStateResponse{healthyReminderBattery()}}
-	deliverReminderTask(Task{RobotESN: esn, Source: "test", configurationGeneration: currentConfigurationGeneration()}, &vector.Vector{Conn: client})
+	deliverReminderTask(Task{RobotESN: esn, Source: "test", configurationGeneration: currentConfigurationGeneration()}, &vector.Vector{Conn: client}, true)
 	if client.batteryCalls != 1 || client.controlCalls != 0 || client.driveCalls != 0 {
 		t.Fatalf("reminder moved or took control during reconnect grace: %+v", client)
 	}
@@ -165,7 +165,7 @@ func TestReminderRechecksBatteryAfterControlBeforeLeavingCharger(t *testing.T) {
 	low.BatteryLevel = vectorpb.BatteryLevel_BATTERY_LEVEL_LOW
 	low.BatteryVolts = 3.4
 	client := &readinessRobotClient{batteries: []*vectorpb.BatteryStateResponse{healthyReminderBattery(), low}}
-	deliverReminderTask(Task{RobotESN: esn, Source: "test", configurationGeneration: currentConfigurationGeneration()}, &vector.Vector{Conn: client})
+	deliverReminderTask(Task{RobotESN: esn, Source: "test", configurationGeneration: currentConfigurationGeneration()}, &vector.Vector{Conn: client}, true)
 	if client.batteryCalls != 2 || client.controlCalls != 1 || client.driveCalls != 0 {
 		t.Fatalf("charger departure used the earlier battery sample: %+v", client)
 	}

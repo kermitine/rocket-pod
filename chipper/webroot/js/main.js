@@ -7,7 +7,7 @@ let reminderCounter = 0;
 let productivityImageLibrary = [];
 
 // VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
-const ROCKET_POD_VERSION = "V68";
+const ROCKET_POD_VERSION = "V71";
 
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
@@ -958,6 +958,14 @@ function collectManualConfigData() {
   return config;
 }
 
+function updateFaceSearchSpeedLabel() {
+  const slider = getE("faceSearchSpeed");
+  const speed = Number(slider.value) || 1;
+  const label = `${speed.toFixed(1)}×${speed === 1 ? " (default)" : ""}`;
+  getE("faceSearchSpeedValue").textContent = label;
+  slider.setAttribute("aria-valuetext", label);
+}
+
 function sendProductivityAPIKey(statusElementId = "addProductivityProviderAPIStatus") {
   const isTodoist = getE("todoistEnable").checked;
   const provider = isTodoist ? "todoist" : "none";
@@ -966,6 +974,7 @@ function sendProductivityAPIKey(statusElementId = "addProductivityProviderAPISta
   formData.append("provider", provider);
   formData.append("target_robot", getE("targetBot").value);
   formData.append("reverse_face_search", getE("reverseFaceSearch").checked);
+  formData.append("face_search_speed_multiplier", getE("faceSearchSpeed").value);
   formData.append("key", getE("prodApiKey").value);
   formData.append("timezone", Intl.DateTimeFormat().resolvedOptions().timeZone || "");
   
@@ -1015,6 +1024,9 @@ function updateProductivityAPI() {
               getE("todoistEnable").checked = (data.provider === "todoist");
               getE("prodApiKey").value = data.key || "";
               getE("reverseFaceSearch").checked = data.reverse_face_search === true;
+              const faceSearchSpeed = Number(data.face_search_speed_multiplier) || 1;
+              getE("faceSearchSpeed").value = faceSearchSpeed >= 0.5 && faceSearchSpeed <= 4 ? faceSearchSpeed : 1;
+              updateFaceSearchSpeedLabel();
               
               if (data.target_robot) {
                   getE("targetBot").value = data.target_robot;

@@ -136,9 +136,31 @@ type confirmationListeningSession struct {
 func executorLoop() {
 	logger.Println("Productivity: executorLoop started")
 	for task := range taskQueue {
+		processReminderBatch(task, taskQueue, processTask)
+	}
+}
+
+// Reuse a successful face search only while draining pending work for the same
+// robot and configuration. An empty queue ends the batch, so later reminders
+// always start with a fresh search.
+func processReminderBatch(task Task, queue <-chan Task, process func(Task, bool) bool) {
+	faceFound := false
+	lastRobot := ""
+	var generation uint64
+	for {
 		logger.Println("Productivity: Processing task for " + task.RobotESN)
-		processTask(task)
-		time.Sleep(5 * time.Second)
+		reuseFace := faceFound && strings.EqualFold(lastRobot, task.RobotESN) && generation == task.configurationGeneration
+		faceFound = process(task, reuseFace)
+		lastRobot, generation = task.RobotESN, task.configurationGeneration
+		select {
+		case next, ok := <-queue:
+			if !ok {
+				return
+			}
+			task = next
+		default:
+			return
+		}
 	}
 }
 
@@ -294,7 +316,7 @@ func getReminderState(id string) (bool, bool) {
 	return false, false
 }
 
-func processTask(task Task) {
+func processTask(task Task, faceAlreadyFound bool) (faceFound bool) {
 	if taskSuppressedAtBedtime(task, time.Now()) {
 		logger.Println("Productivity: Skipping automatic notification during bedtime")
 		return
@@ -332,10 +354,10 @@ func processTask(task Task) {
 		deferTask(task, "robot is unavailable", reminderOfflineRetryDelay)
 		return
 	}
-	deliverReminderTask(task, robot)
+	return deliverReminderTask(task, robot, faceAlreadyFound)
 }
 
-func deliverReminderTask(task Task, robot *vector.Vector) {
+func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool) (faceFound bool) {
 	if !taskCanRun(task) {
 		return
 	}
@@ -368,6 +390,7 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 		if controlHeld {
 			if err := releaseBehaviorControl(bcClient); err != nil {
 				logger.Println("Productivity: Failed to release behavior control: " + err.Error())
+				faceFound = false
 			}
 		}
 	}()
@@ -379,6 +402,7 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 		return
 	}
 	if battResp.IsOnChargerPlatform {
+		faceAlreadyFound = false
 		_, err := robot.Conn.DriveOffCharger(ctx, &vectorpb.DriveOffChargerRequest{})
 		if err != nil {
 			retryTask(task, "Drive off failed")
@@ -389,10 +413,16 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 	if !taskCanRun(task) {
 		return
 	}
-	if !facePersonForReminder(ctx, robot, task.RobotESN) {
-		logger.Println("Productivity: Reminder presentation canceled because the approach was interrupted")
-		rescheduleAbortedTask(task, robot, "reminder approach was interrupted")
-		return
+	if !faceAlreadyFound {
+		var canPresent bool
+		faceAlreadyFound, canPresent = facePersonForReminder(ctx, robot, task.RobotESN)
+		if !canPresent {
+			logger.Println("Productivity: Reminder presentation canceled because the approach was interrupted")
+			rescheduleAbortedTask(task, robot, "reminder approach was interrupted")
+			return
+		}
+	} else {
+		logger.Println("Productivity: Reusing the face found for this notification batch")
 	}
 	if !taskCanRun(task) {
 		return
@@ -448,12 +478,7 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 	if !pagesHandled && len(task.Phrases) > 0 {
 		phrase := task.Phrases[rand.Intn(len(task.Phrases))]
 		if phrase != "" {
-			if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{
-				Text:           speechWithoutDiacritics(phrase),
-				UseVectorVoice: true,
-				DurationScalar: 1.0,
-			}); err != nil {
-				logger.Println("Productivity: Reminder speech failed: " + err.Error())
+			if !processTaskPages(ctx, robot, []TaskPage{{Speech: phrase}}) {
 				rescheduleAbortedTask(task, robot, "reminder speech was interrupted")
 				return
 			}
@@ -513,6 +538,10 @@ func deliverReminderTask(task Task, robot *vector.Vector) {
 			snoozeTask(task)
 		}
 	}
+	if ctx.Err() != nil || !taskCanRun(task) {
+		return
+	}
+	return faceAlreadyFound
 }
 
 func processTaskPages(ctx context.Context, robot *vector.Vector, pages []TaskPage) bool {
@@ -669,15 +698,28 @@ func reminderFaceSearchAnimationRequest() *vectorpb.PlayAnimationRequest {
 	}
 }
 
-func reminderFaceScanRequest(reverse bool) *vectorpb.TurnInPlaceRequest {
+func ValidateFaceSearchSpeedMultiplier(multiplier float64) error {
+	if !(multiplier >= 0.5 && multiplier <= 4.0) {
+		return fmt.Errorf("Face-search speed must be between 0.5x and 4.0x")
+	}
+	return nil
+}
+
+func reminderFaceScanRequest(reverse bool, speedMultiplier float64) *vectorpb.TurnInPlaceRequest {
+	// A missing setting in older configurations keeps the original turn speed.
+	if ValidateFaceSearchSpeedMultiplier(speedMultiplier) != nil {
+		speedMultiplier = 1
+	}
 	angle := float32(reminderFaceScanStepAngle)
 	if reverse {
 		angle = -angle
 	}
 	return &vectorpb.TurnInPlaceRequest{
-		AngleRad:        angle,
-		SpeedRadPerSec:  reminderFaceScanSpeed,
-		AccelRadPerSec2: 1.5,
+		AngleRad:       angle,
+		SpeedRadPerSec: float32(reminderFaceScanSpeed * speedMultiplier),
+		// These short turns can finish before reaching the requested speed.
+		// Scaling acceleration as well makes their duration scale with the slider.
+		AccelRadPerSec2: float32(1.5 * speedMultiplier * speedMultiplier),
 		IdTag:           reminderFaceScanActionTag,
 		NumRetries:      0,
 	}
@@ -738,7 +780,7 @@ func (o *faceSearchObservations) face() (int32, bool) {
 // Scan in small, completed turns until the event stream reports a tracked face,
 // explicitly face it, and make a cliff-monitored approach. Presentation
 // is gated on positive confirmation that both wheels have stopped.
-func facePersonForReminder(ctx context.Context, robot *vector.Vector, esn string) bool {
+func facePersonForReminder(ctx context.Context, robot *vector.Vector, esn string) (faceFound, canPresent bool) {
 	positionReminderLiftDown(ctx, robot)
 	positionReminderHeadForViewing(ctx, robot, "before face scan")
 	defer positionReminderHeadForViewing(ctx, robot, "before reminder display")
@@ -770,7 +812,7 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector, esn string
 	} else {
 		cancel()
 		logger.Println("Productivity: Could not observe faces; skipping face search: " + eventErr.Error())
-		return true
+		return false, true
 	}
 
 	logger.Println("Productivity: Looking for a person before delivering reminder")
@@ -785,7 +827,8 @@ func facePersonForReminder(ctx context.Context, robot *vector.Vector, esn string
 
 	// Give face detection a moment before beginning the scan. Each turn is a
 	// small, completed action, so observing a face prevents any further turns.
-	scanRequest := reminderFaceScanRequest(vars.APIConfig.Productivity.ReverseFaceSearch)
+	config := vars.APIConfig.Productivity
+	scanRequest := reminderFaceScanRequest(config.ReverseFaceSearch, config.FaceSearchSpeedMultiplier)
 	warmupTimer := time.NewTimer(reminderInitialFaceCheck)
 	select {
 	case <-faceSeen:
@@ -830,7 +873,7 @@ scanLoop:
 	faceID, faceObserved := observations.face()
 	if !faceObserved {
 		logger.Println("Productivity: No face observed before reminder; continuing")
-		return true
+		return false, true
 	}
 
 	logger.Println("Productivity: Turning toward observed face for reminder")
@@ -844,18 +887,18 @@ scanLoop:
 	})
 	if err != nil {
 		logger.Println("Productivity: Could not turn toward face; continuing: " + err.Error())
-		return true
+		return false, true
 	}
 	if turnResponse.GetResult() == nil || turnResponse.GetResult().GetCode() != vectorpb.ActionResult_ACTION_RESULT_SUCCESS {
 		logger.Println("Productivity: Face turn did not complete; continuing")
-		return true
+		return false, true
 	}
 	logger.Println("Productivity: Facing person for reminder")
 	if _, delay, reason := checkReminderReadiness(ctx, esn, robot.Conn); delay > 0 {
 		logger.Println("Productivity: Canceling reminder approach: " + reason)
-		return false
+		return false, false
 	}
-	return driveStraightForReminder(ctx, robot)
+	return true, driveStraightForReminder(ctx, robot)
 }
 
 func driveStraightForReminder(ctx context.Context, robot *vector.Vector) bool {

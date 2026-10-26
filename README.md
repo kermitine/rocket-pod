@@ -29,6 +29,16 @@ reconnects or Rocket Pod starts. Offline, unknown, low, or uninitialized battery
 readings keep reminders pending. Rocket Pod checks the battery again immediately
 before leaving the charger and before approaching for a reminder.
 
+While notifications are queued, Vector searches for a face before each one until
+he finds someone. Once he successfully faces that person, the remaining queued
+notifications play in order without repeating the search or approach. A new
+search is needed after the queue empties, the target robot or settings change,
+or a delivery is interrupted. Battery and bedtime checks still apply to each
+notification.
+
+In **Productivity**, adjust **Face-search turn speed** from 0.5x to 4.0x and click
+**Apply Productivity Settings**. The default 1.0x keeps the original speed.
+
 ## Wiki
 
 Check out the [wiki](https://github.com/kercre123/wire-pod/wiki) for more information on the upstream project, installation, troubleshooting, development, and generally helpful tips.

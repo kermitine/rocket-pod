@@ -259,6 +259,18 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	targetRobot := r.FormValue("target_robot")
+	faceSearchSpeed := vars.APIConfig.Productivity.FaceSearchSpeedMultiplier
+	if raw := strings.TrimSpace(r.FormValue("face_search_speed_multiplier")); raw != "" {
+		faceSearchSpeed, err = strconv.ParseFloat(raw, 64)
+		if err != nil {
+			http.Error(w, "Invalid face-search speed", http.StatusBadRequest)
+			return
+		}
+		if err := productivity.ValidateFaceSearchSpeedMultiplier(faceSearchSpeed); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	reverseFaceSearch := vars.APIConfig.Productivity.ReverseFaceSearch
 	if raw := strings.TrimSpace(r.FormValue("reverse_face_search")); raw != "" {
 		reverseFaceSearch, err = strconv.ParseBool(raw)
@@ -376,6 +388,7 @@ func handleSetProductivityAPI(w http.ResponseWriter, r *http.Request) {
 	vars.APIConfig.Productivity.Password = strings.TrimSpace(password)
 	vars.APIConfig.Productivity.TargetRobot = strings.TrimSpace(targetRobot)
 	vars.APIConfig.Productivity.ReverseFaceSearch = reverseFaceSearch
+	vars.APIConfig.Productivity.FaceSearchSpeedMultiplier = faceSearchSpeed
 	vars.APIConfig.Productivity.Timezone = timezone
 	vars.APIConfig.Productivity.ManualConfig = manualConfig
 	vars.APIConfig.Productivity.NBA = nbaConfig
