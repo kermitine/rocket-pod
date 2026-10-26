@@ -38,7 +38,25 @@ type bedtimeConfiguration struct {
 var bedtimeSettings atomic.Value
 
 func refreshBedtimeConfiguration() {
-	bedtimeSettings.Store(bedtimeConfiguration{vars.APIConfig.Productivity.Bedtime, productivityTargetRobot()})
+	config := bedtimeConfiguration{vars.APIConfig.Productivity.Bedtime, productivityTargetRobot()}
+	bedtimeSettings.Store(config)
+	if !config.Schedule.Enable {
+		logger.Println("Bedtime: Disabled")
+		return
+	}
+	if err := ValidateBedtimeConfig(config.Schedule); err != nil {
+		logger.Println("Bedtime: Invalid schedule: " + err.Error())
+		return
+	}
+	if config.RobotESN == "" {
+		logger.Println("Bedtime: No target robot available")
+		return
+	}
+	location, _ := time.LoadLocation(config.Schedule.Timezone)
+	now := time.Now()
+	logger.Println(fmt.Sprintf("Bedtime: Schedule %s-%s %s for %s; local time %s; active=%t",
+		config.Schedule.Start, config.Schedule.End, config.Schedule.Timezone, config.RobotESN,
+		now.In(location).Format("2006-01-02 15:04:05 MST"), bedtimeActiveAt(config.Schedule, now)))
 }
 
 func currentBedtimeConfiguration() bedtimeConfiguration {
@@ -172,9 +190,11 @@ func bedtimeLoop(ctx context.Context) {
 		config := currentBedtimeConfiguration()
 		active := config.RobotESN != "" && bedtimeActiveAt(config.Schedule, time.Now())
 		if stop != nil && (!active || config != running) {
+			logger.Println("Bedtime: Stopping enforcement for " + running.RobotESN)
 			stopSession()
 		}
 		if active && stop == nil {
+			logger.Println("Bedtime: Starting enforcement for " + config.RobotESN)
 			running = config
 			var sessionCtx context.Context
 			sessionCtx, stop = context.WithCancel(ctx)
@@ -269,7 +289,7 @@ func runBedtimeSession(ctx context.Context, config bedtimeConfiguration) error {
 	setNativeBedtimeSleep(context.Background(), client, consoleURL, false)
 	ticker := time.NewTicker(bedtimeCheckInterval)
 	defer ticker.Stop()
-	var lastHome, lastSleep, lastFallback time.Time
+	enforcer := bedtimeEnforcer{robot: robot, client: client, consoleURL: consoleURL, esn: config.RobotESN}
 	for {
 		select {
 		case <-ctx.Done():
@@ -277,53 +297,99 @@ func runBedtimeSession(ctx context.Context, config bedtimeConfiguration) error {
 		case err := <-streamError:
 			return err
 		case <-ticker.C:
-			now := time.Now()
-			if bedtimeInteractionActive(config.RobotESN, now) {
-				lastHome, lastSleep, lastFallback = time.Time{}, time.Time{}, time.Time{}
-				continue
-			}
 			stateMu.Lock()
 			latest, latestAt := state, stateAt
 			stateMu.Unlock()
-			// Without fresh sensors we cannot safely distinguish an idle robot
-			// from one being touched or held. Reconnect instead of forcing sleep.
-			if latest == nil || now.Sub(latestAt) > 2*bedtimeCheckInterval {
-				return fmt.Errorf("robot state stream is stale")
-			}
-			if !reminderRobotStateHas(latest, vectorpb.RobotStatus_ROBOT_STATUS_IS_ON_CHARGER) {
-				if now.Sub(lastHome) < bedtimeHomeRetry {
-					continue
-				}
-				requestCtx, cancel := context.WithTimeout(ctx, bedtimeRequestTimeout)
-				_, err := robot.AppIntent(requestCtx, &vectorpb.AppIntentRequest{Intent: "intent_greeting_goodnight"})
-				cancel()
-				if err != nil {
-					return err
-				}
-				lastHome = now
-				continue
-			}
-			if now.Sub(lastSleep) >= bedtimeSleepRetry {
-				if err := pulseNativeBedtimeSleep(ctx, client, consoleURL, config.RobotESN); err != nil {
-					// Standard sleep enters a comatose phase that ignores touch.
-					// Goodnight preserves touch reactions on firmware without the console.
-					if ctx.Err() != nil {
-						return nil
-					}
-					if !bedtimeInteractionActive(config.RobotESN, time.Now()) && now.Sub(lastFallback) >= bedtimeHomeRetry {
-						logger.Println("Bedtime: Native sleep control unavailable; using goodnight: " + err.Error())
-						requestCtx, cancel := context.WithTimeout(ctx, bedtimeRequestTimeout)
-						_, fallbackErr := robot.AppIntent(requestCtx, &vectorpb.AppIntentRequest{Intent: "intent_greeting_goodnight"})
-						cancel()
-						if fallbackErr != nil {
-							return fallbackErr
-						}
-						lastFallback = now
-					}
-				}
-				lastSleep = now
+			if err := enforcer.check(ctx, latest, latestAt, time.Now()); err != nil {
+				return err
 			}
 		}
+	}
+}
+
+type bedtimeEnforcer struct {
+	robot                             vectorpb.ExternalInterfaceClient
+	client                            *http.Client
+	consoleURL, esn                   string
+	lastHome, lastSleep, lastFallback time.Time
+	interactionPaused, wasOnCharger   bool
+}
+
+func (enforcer *bedtimeEnforcer) check(ctx context.Context, state *vectorpb.RobotState, stateAt, now time.Time) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	if bedtimeInteractionActive(enforcer.esn, now) {
+		if !enforcer.interactionPaused {
+			logger.Println("Bedtime: Paused for " + enforcer.esn + "; waiting for requests to finish and one minute without interaction")
+		}
+		enforcer.interactionPaused = true
+		enforcer.lastHome, enforcer.lastSleep, enforcer.lastFallback = time.Time{}, time.Time{}, time.Time{}
+		return nil
+	}
+	if enforcer.interactionPaused {
+		logger.Println("Bedtime: Resuming enforcement for " + enforcer.esn + " after one minute without interaction")
+		enforcer.interactionPaused = false
+	}
+	// Without fresh sensors we cannot safely distinguish an idle robot
+	// from one being touched or held. Reconnect instead of forcing sleep.
+	if state == nil || now.Sub(stateAt) > 2*bedtimeCheckInterval {
+		return fmt.Errorf("robot state stream is stale")
+	}
+	if !reminderRobotStateHas(state, vectorpb.RobotStatus_ROBOT_STATUS_IS_ON_CHARGER) {
+		enforcer.wasOnCharger = false
+		if now.Sub(enforcer.lastHome) < bedtimeHomeRetry {
+			return nil
+		}
+		logger.Println("Bedtime: Sending " + enforcer.esn + " home with intent_system_charger")
+		// AppIntent accepts a limited set of app intents. The cloud-only
+		// intent_greeting_goodnight can be silently ignored by the engine.
+		if err := requestBedtimeCharger(ctx, enforcer.robot); err != nil {
+			return err
+		}
+		enforcer.lastHome = now
+		return nil
+	}
+	if !enforcer.wasOnCharger {
+		logger.Println("Bedtime: " + enforcer.esn + " is on the charger; maintaining rest")
+		enforcer.wasOnCharger = true
+		enforcer.lastHome = time.Time{}
+	}
+	if now.Sub(enforcer.lastSleep) >= bedtimeSleepRetry {
+		if enforcer.lastSleep.IsZero() {
+			logger.Println("Bedtime: Requesting native sleep for " + enforcer.esn)
+		}
+		if err := pulseNativeBedtimeSleep(ctx, enforcer.client, enforcer.consoleURL, enforcer.esn); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if !bedtimeInteractionActive(enforcer.esn, time.Now()) && now.Sub(enforcer.lastFallback) >= bedtimeHomeRetry {
+				// Standard sleep can ignore touch, and goodnight is not an app
+				// intent. Keep him docked when native sleep is unavailable.
+				logger.Println("Bedtime: Native sleep control unavailable for " + enforcer.esn + "; keeping him on the charger: " + err.Error())
+				if err := requestBedtimeCharger(ctx, enforcer.robot); err != nil {
+					return err
+				}
+				enforcer.lastFallback = now
+			}
+		}
+		enforcer.lastSleep = now
+	}
+	return nil
+}
+
+func requestBedtimeCharger(ctx context.Context, robot vectorpb.ExternalInterfaceClient) error {
+	requestCtx, cancel := context.WithTimeout(ctx, bedtimeRequestTimeout)
+	defer cancel()
+	response, err := robot.AppIntent(requestCtx, &vectorpb.AppIntentRequest{Intent: "intent_system_charger"})
+	if err != nil {
+		return fmt.Errorf("go-home request failed: %w", err)
+	}
+	switch response.GetStatus().GetCode() {
+	case vectorpb.ResponseStatus_RESPONSE_RECEIVED, vectorpb.ResponseStatus_REQUEST_PROCESSING, vectorpb.ResponseStatus_OK:
+		return nil
+	default:
+		return fmt.Errorf("go-home request returned status %s", response.GetStatus().GetCode())
 	}
 }
 

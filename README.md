@@ -39,6 +39,18 @@ notification.
 In **Productivity**, adjust **Face-search turn speed** from 0.5x to 8.0x and click
 **Apply Productivity Settings**. The default 1.0x keeps the original speed.
 
+## Bedtime
+
+Bedtime sends the selected robot to his charger after one minute without user
+interaction. Test notifications and voice responses stay awake until they finish,
+then receive the full minute of grace. Rocket Pod must remain running and connected.
+
+The logs show the saved schedule, timezone, current local time, whether bedtime
+is active, interaction pauses, and go-home attempts. Native sleep requires the
+robot's sleep console control. If that control is unavailable, Rocket Pod logs
+the failure and keeps him on his charger; it cannot enforce sleep on that firmware.
+Morning ends bedtime enforcement without forcing him awake.
+
 ## Wiki
 
 Check out the [wiki](https://github.com/kercre123/wire-pod/wiki) for more information on the upstream project, installation, troubleshooting, development, and generally helpful tips.

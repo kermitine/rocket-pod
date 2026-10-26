@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/fforchino/vector-go-sdk/pkg/vectorpb"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
+	"google.golang.org/grpc"
 )
 
 func TestBedtimeScheduleTimezoneAndBoundaries(t *testing.T) {
@@ -123,6 +125,147 @@ func TestBedtimeRecognizesTouchPickupAndButton(t *testing.T) {
 	}
 	if bedtimeRobotIsInteracting(nil) || bedtimeRobotIsInteracting(&vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_ANIMATING)}) {
 		t.Fatal("autonomous animation was treated as user interaction")
+	}
+}
+
+type bedtimeIntentRobot struct {
+	vectorpb.ExternalInterfaceClient
+	intents  []string
+	response *vectorpb.AppIntentResponse
+	err      error
+}
+
+func (robot *bedtimeIntentRobot) AppIntent(_ context.Context, request *vectorpb.AppIntentRequest, _ ...grpc.CallOption) (*vectorpb.AppIntentResponse, error) {
+	robot.intents = append(robot.intents, request.Intent)
+	return robot.response, robot.err
+}
+
+func TestBedtimeReturnsHomeAfterTestNotificationFinishes(t *testing.T) {
+	const esn = "bedtime-after-nba-test"
+	t.Cleanup(func() {
+		bedtimeActivity.Lock()
+		delete(bedtimeActivity.Robots, esn)
+		bedtimeActivity.Unlock()
+	})
+	robot := &bedtimeIntentRobot{response: &vectorpb.AppIntentResponse{
+		Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_REQUEST_PROCESSING},
+	}}
+	enforcer := bedtimeEnforcer{robot: robot, esn: esn, lastHome: time.Now()}
+	// An NBA test is allowed during bedtime and keeps the robot awake until
+	// delivery finishes, even if delivery lasts longer than the grace period.
+	endInteraction := BeginBedtimeInteraction(esn)
+	state := &vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_MOVING | vectorpb.RobotStatus_ROBOT_STATUS_IS_ANIMATING)}
+	now := time.Now().Add(5 * time.Minute)
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	endInteraction()
+	bedtimeActivity.Lock()
+	finished := bedtimeActivity.Robots[esn].Last
+	bedtimeActivity.Unlock()
+	now = finished.Add(bedtimeInteractionGrace - time.Second)
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(robot.intents) != 0 {
+		t.Fatal("bedtime interrupted the notification or its full interaction grace period")
+	}
+	now = finished.Add(bedtimeInteractionGrace)
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(robot.intents, []string{"intent_system_charger"}) {
+		t.Fatalf("idle robot was not sent home with a supported app intent: %v", robot.intents)
+	}
+	if err := enforcer.check(context.Background(), state, now.Add(time.Second), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if len(robot.intents) != 1 {
+		t.Fatal("go-home retries were not rate limited")
+	}
+	now = now.Add(bedtimeHomeRetry)
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(robot.intents) != 2 {
+		t.Fatal("robot still off the charger was not sent home again")
+	}
+}
+
+func TestBedtimeGoHomeChecksRobotResponse(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response *vectorpb.AppIntentResponse
+		err      error
+		wantErr  bool
+	}{
+		{"received", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_RESPONSE_RECEIVED}}, nil, false},
+		{"processing", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_REQUEST_PROCESSING}}, nil, false},
+		{"ok", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_OK}}, nil, false},
+		{"forbidden", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_FORBIDDEN}}, nil, true},
+		{"not found", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_NOT_FOUND}}, nil, true},
+		{"busy", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_ERROR_UPDATE_IN_PROGRESS}}, nil, true},
+		{"unknown", &vectorpb.AppIntentResponse{Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_UNKNOWN}}, nil, true},
+		{"missing status", &vectorpb.AppIntentResponse{}, nil, true},
+		{"missing response", nil, nil, true},
+		{"offline", nil, errors.New("offline"), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			robot := &bedtimeIntentRobot{response: test.response, err: test.err}
+			if err := requestBedtimeCharger(context.Background(), robot); (err != nil) != test.wantErr {
+				t.Fatalf("go-home error=%v, want error=%v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestBedtimeDoesNotSendHomeWithoutFreshSensors(t *testing.T) {
+	now := time.Now()
+	for _, state := range []*vectorpb.RobotState{nil, {}} {
+		robot := &bedtimeIntentRobot{}
+		enforcer := bedtimeEnforcer{robot: robot, esn: "stale-bedtime-robot"}
+		if err := enforcer.check(context.Background(), state, now.Add(-3*bedtimeCheckInterval), now); err == nil {
+			t.Fatal("missing or stale sensors did not trigger reconnection")
+		}
+		if len(robot.intents) != 0 {
+			t.Fatal("sent the robot home without fresh interaction sensors")
+		}
+	}
+}
+
+func TestBedtimeWithoutNativeSleepKeepsRobotDocked(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	robot := &bedtimeIntentRobot{response: &vectorpb.AppIntentResponse{
+		Status: &vectorpb.ResponseStatus{Code: vectorpb.ResponseStatus_REQUEST_PROCESSING},
+	}}
+	enforcer := bedtimeEnforcer{robot: robot, client: server.Client(), consoleURL: server.URL + "?value=", esn: "bedtime-without-console"}
+	state := &vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_ON_CHARGER)}
+	now := time.Now()
+	enforcer.lastHome = now.Add(-time.Second)
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(robot.intents, []string{"intent_system_charger"}) {
+		t.Fatalf("native sleep fallback used an unsupported intent or touch-blocking sleep: %v", robot.intents)
+	}
+	now = now.Add(bedtimeSleepRetry)
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(robot.intents) != 1 {
+		t.Fatal("native sleep fallback was not rate limited")
+	}
+	// Docking clears the old go-home retry delay: a later departure should
+	// trigger a new request on the next check, rather than wait two minutes.
+	state.Status = 0
+	if err := enforcer.check(context.Background(), state, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(robot.intents) != 2 {
+		t.Fatal("robot leaving the charger was not sent home again")
 	}
 }
 
