@@ -14,13 +14,13 @@ import (
 
 func setupF1UnchangedPolling(t *testing.T, session *f1Competition, limit int) {
 	t.Helper()
-	previousConfig, previousClient, previousQueue := vars.APIConfig.Productivity, externalApiClient, taskQueue
+	setupSportsTaskQueue(t, 1)
+	previousConfig, previousClient := vars.APIConfig.Productivity, externalApiClient
 	t.Cleanup(func() {
-		vars.APIConfig.Productivity, externalApiClient, taskQueue = previousConfig, previousClient, previousQueue
+		vars.APIConfig.Productivity, externalApiClient = previousConfig, previousClient
 		resetF1NotificationState()
 	})
 	resetF1NotificationState()
-	taskQueue = make(chan Task, 1)
 	vars.APIConfig.Productivity = vars.ProductivityConfig{
 		TargetRobot: "f1-unchanged-test", Timezone: "UTC",
 		F1: vars.F1Config{

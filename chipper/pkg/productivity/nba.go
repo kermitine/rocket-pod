@@ -235,13 +235,11 @@ func InjectTestNBAUpdate(robotESN string) error {
 		Source:                  "test",
 		configurationGeneration: currentConfigurationGeneration(),
 	}
-	select {
-	case taskQueue <- task:
+	if enqueueTask(task) {
 		logger.Println("Productivity: Random NBA test update queued")
 		return nil
-	default:
-		return fmt.Errorf("reminder queue is full")
 	}
+	return fmt.Errorf("reminder queue is full")
 }
 
 // InjectTestNBAFinalUpdate queues a synthetic completed game so the final
@@ -284,13 +282,11 @@ func InjectTestNBAFinalUpdate(robotESN string) error {
 		Source:                  "test",
 		configurationGeneration: currentConfigurationGeneration(),
 	}
-	select {
-	case taskQueue <- task:
+	if enqueueTask(task) {
 		logger.Println("Productivity: Random NBA final score test queued")
 		return nil
-	default:
-		return fmt.Errorf("reminder queue is full")
 	}
+	return fmt.Errorf("reminder queue is full")
 }
 
 func randomNBATestGame(rng *rand.Rand) nbaEvent {
@@ -503,11 +499,10 @@ func checkNBAGames() {
 			Source:                  "nba",
 			configurationGeneration: generation,
 		}
-		select {
-		case taskQueue <- task:
+		if enqueueSportsNotification(task, game.ID) {
 			markNBANotified(game.ID, kind, now)
 			logger.Println("Productivity: Queued NBA " + kind + " update for game " + game.ID)
-		default:
+		} else {
 			logger.Println("Productivity: Queue full, skipping NBA update for game " + game.ID)
 		}
 	}

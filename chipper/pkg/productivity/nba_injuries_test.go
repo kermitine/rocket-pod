@@ -72,13 +72,13 @@ func TestNBAPregameQueuesInjuryReportAndSurvivesLookupFailure(t *testing.T) {
 		{name: "live skips injuries", state: "in"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			previousConfig, previousClient, previousQueue := vars.APIConfig.Productivity, externalApiClient, taskQueue
+			setupSportsTaskQueue(t, 2)
+			previousConfig, previousClient := vars.APIConfig.Productivity, externalApiClient
 			t.Cleanup(func() {
-				vars.APIConfig.Productivity, externalApiClient, taskQueue = previousConfig, previousClient, previousQueue
+				vars.APIConfig.Productivity, externalApiClient = previousConfig, previousClient
 				resetNBANotificationState()
 			})
 			resetNBANotificationState()
-			taskQueue = make(chan Task, 2)
 			vars.APIConfig.Productivity.TargetRobot = "nba-injury-test"
 			vars.APIConfig.Productivity.Timezone = "UTC"
 			vars.APIConfig.Productivity.NBA = vars.NBAConfig{

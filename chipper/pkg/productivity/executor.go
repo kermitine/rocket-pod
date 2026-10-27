@@ -47,6 +47,7 @@ type Task struct {
 	SnoozeMinutes           int
 	ExpiresAt               time.Time
 	configurationGeneration uint64
+	sportsNotification      *pendingSportsNotification
 }
 
 type TaskPage struct {
@@ -166,10 +167,9 @@ func processReminderBatch(task Task, queue <-chan Task, process func(Task, bool)
 
 func InjectTestTask(task Task) {
 	task.configurationGeneration = currentConfigurationGeneration()
-	select {
-	case taskQueue <- task:
+	if enqueueTask(task) {
 		logger.Println("Productivity: Test task pushed")
-	default:
+	} else {
 		logger.Println("Productivity: Queue full")
 	}
 }
@@ -199,7 +199,14 @@ func deferTask(task Task, reason string, delay time.Duration) {
 }
 
 func requeueTaskAfter(task Task, delay time.Duration) {
+	markSportsTaskDeferred(task)
 	go func() {
+		requeued := false
+		defer func() {
+			if !requeued {
+				forgetSportsTask(task)
+			}
+		}()
 		var ok bool
 		delay, ok = taskRequeueDelay(task, time.Now(), delay)
 		if !ok {
@@ -208,14 +215,21 @@ func requeueTaskAfter(task Task, delay time.Duration) {
 
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
-		<-timer.C
+		select {
+		case <-timer.C:
+		case <-taskSupersededChannel(task):
+			return
+		}
 
 		for taskCanRun(task) {
-			select {
-			case taskQueue <- task:
+			if enqueueTask(task) {
+				requeued = true
 				return
-			default:
-				time.Sleep(time.Second)
+			}
+			select {
+			case <-time.After(time.Second):
+			case <-taskSupersededChannel(task):
+				return
 			}
 		}
 	}()
@@ -275,7 +289,13 @@ func snoozeTask(task Task) {
 // configuration. Sleeping work is discarded before it can reach the robot.
 func NotifyConfigUpdated() {
 	refreshBedtimeConfiguration()
+	taskQueueMu.Lock()
 	atomic.AddUint64(&configurationGeneration, 1)
+	for key, notification := range pendingSportsNotifications {
+		close(notification.superseded)
+		delete(pendingSportsNotifications, key)
+	}
+	taskQueueMu.Unlock()
 	select {
 	case schedulerRefresh <- struct{}{}:
 	default:
@@ -296,7 +316,7 @@ func taskIsExpiredAt(task Task, now time.Time) bool {
 
 func taskCanRun(task Task) bool {
 	now := time.Now()
-	return taskIsCurrent(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
+	return taskIsCurrent(task) && !taskIsSuperseded(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
 }
 
 func getReminderState(id string) (bool, bool) {
@@ -317,6 +337,12 @@ func getReminderState(id string) (bool, bool) {
 }
 
 func processTask(task Task, faceAlreadyFound bool) (faceFound bool) {
+	beginSportsTaskAttempt(task)
+	defer finishSportsTaskAttempt(task)
+	if taskIsSuperseded(task) {
+		logger.Println("Productivity: Discarding superseded sports notification " + task.ID)
+		return
+	}
 	if taskSuppressedAtBedtime(task, time.Now()) {
 		logger.Println("Productivity: Skipping automatic notification during bedtime")
 		return

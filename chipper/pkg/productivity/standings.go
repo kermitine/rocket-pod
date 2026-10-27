@@ -257,10 +257,7 @@ func QueueVoiceStandings(robotESN, kind string) error {
 			Source:                  "standings",
 			configurationGeneration: generation,
 		}
-		select {
-		case taskQueue <- task:
-		default:
-		}
+		enqueueTask(task)
 	}()
 	return nil
 }

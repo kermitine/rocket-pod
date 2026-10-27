@@ -182,13 +182,11 @@ func injectTestF1Leaderboard(robotESN string, sessionType, kind string) error {
 	if err != nil {
 		return err
 	}
-	select {
-	case taskQueue <- Task{ID: fmt.Sprintf("f1_test_%s_%d", logName, time.Now().UnixNano()), RobotESN: robotESN, Pages: pages, Source: "f1", configurationGeneration: currentConfigurationGeneration()}:
+	if enqueueTask(Task{ID: fmt.Sprintf("f1_test_%s_%d", logName, time.Now().UnixNano()), RobotESN: robotESN, Pages: pages, Source: "f1", configurationGeneration: currentConfigurationGeneration()}) {
 		logger.Println("Productivity: F1 " + logName + " test update queued")
 		return nil
-	default:
-		return fmt.Errorf("reminder queue is full")
 	}
+	return fmt.Errorf("reminder queue is full")
 }
 
 func syntheticF1Race() (f1Event, f1Competition) {
@@ -242,6 +240,7 @@ func checkF1Races() {
 	if !config.Enable {
 		return
 	}
+	generation := currentConfigurationGeneration()
 	target := productivityTargetRobot()
 	if target == "" {
 		return
@@ -288,14 +287,16 @@ func checkF1Races() {
 					continue
 				}
 			}
-			select {
-			case taskQueue <- Task{ID: "f1_" + session.ID + "_" + kind, RobotESN: target, Pages: pages, Source: "f1", configurationGeneration: currentConfigurationGeneration()}:
+			if enqueueSportsNotification(Task{
+				ID: "f1_" + session.ID + "_" + kind, RobotESN: target, Pages: pages,
+				Source: "f1", configurationGeneration: generation,
+			}, session.ID) {
 				markF1Notified(session.ID, kind, now)
 				if strings.EqualFold(session.Type.Abbreviation, "Race") && (kind == "live" || kind == "leader") {
 					f1LastRaceOrder[session.ID] = f1RaceOrder(session)
 				}
 				logger.Println("Productivity: Queued F1 " + f1SessionName(session) + " " + kind + " update for session " + session.ID)
-			default:
+			} else {
 				logger.Println("Productivity: Queue full, skipping F1 update for session " + session.ID)
 			}
 		}

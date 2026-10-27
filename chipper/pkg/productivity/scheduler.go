@@ -187,14 +187,17 @@ func checkTodoistTasks() {
 			}
 			if !lastProcessedTasks[task.ID] {
 				logger.Println("Productivity: Todoist task matched: " + task.Content)
-				taskQueue <- Task{
+				if enqueueTask(Task{
 					ID:                      task.ID,
 					RobotESN:                targetBot,
 					Phrases:                 []string{task.Content},
 					Source:                  "todoist",
 					configurationGeneration: generation,
+				}) {
+					lastProcessedTasks[task.ID] = true
+				} else {
+					logger.Println("Productivity: Queue full, skipping Todoist task " + task.ID)
 				}
-				lastProcessedTasks[task.ID] = true
 			}
 		}
 	}
@@ -273,8 +276,7 @@ func checkManualReminders(esn string, configStr string, generation uint64) {
 		}
 
 		if shouldRun {
-			select {
-			case taskQueue <- Task{
+			if enqueueTask(Task{
 				ID:                      r.ID,
 				RobotESN:                esn,
 				Phrases:                 r.Phrases,
@@ -284,12 +286,12 @@ func checkManualReminders(esn string, configStr string, generation uint64) {
 				SnoozeMinutes:           r.SnoozeMinutes,
 				ExpiresAt:               expiresAt,
 				configurationGeneration: generation,
-			}:
+			}) {
 				logger.Println("Productivity: Scheduled manual task " + r.ID)
 				if runKey != "" {
 					lastManualRun[r.ID] = runKey
 				}
-			default:
+			} else {
 				logger.Println("Productivity: Queue full, skipping task " + r.ID)
 			}
 		}

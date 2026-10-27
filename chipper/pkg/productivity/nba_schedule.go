@@ -51,12 +51,10 @@ func QueueVoiceNBAGamesToday(robotESN string) error {
 			pages = nbaScheduleMessagePages("UNAVAILABLE", "Sorry, I couldn't get today's NBA games. Please try again.")
 		}
 		<-acknowledged
-		select {
-		case taskQueue <- Task{
+		if !enqueueTask(Task{
 			ID: fmt.Sprintf("nba_schedule_%d", time.Now().UnixNano()), RobotESN: robotESN,
 			Pages: pages, Source: nbaGamesTodaySource, ExpiresAt: expiresAt, configurationGeneration: generation,
-		}:
-		default:
+		}) {
 			logger.Println("Productivity: Queue full, skipping requested NBA schedule")
 		}
 	}()
