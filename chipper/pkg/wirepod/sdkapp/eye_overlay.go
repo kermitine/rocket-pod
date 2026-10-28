@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kercre123/wire-pod/chipper/pkg/robotssh"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	"golang.org/x/crypto/ssh"
 )
@@ -316,12 +317,13 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	console := eyeConsole{baseURL: "http://" + net.JoinHostPort(ip, "8889"), client: &http.Client{Timeout: 5 * time.Second}}
 	if statusRequest {
+		keySaved := robotssh.HasSavedKey(serial)
 		state, err := console.state(ctx)
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"supported": false, "robot_ip": ip, "message": err.Error()})
+			json.NewEncoder(w).Encode(map[string]interface{}{"supported": false, "robot_ip": ip, "key_saved": keySaved, "message": err.Error()})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"supported": true, "enabled": state.Enabled, "custom": state.Flavor == 8, "robot_ip": ip})
+		json.NewEncoder(w).Encode(map[string]interface{}{"supported": true, "enabled": state.Enabled, "custom": state.Flavor == 8, "robot_ip": ip, "key_saved": keySaved})
 		return
 	}
 	lock, _ := eyeOverlayLocks.LoadOrStore(serial, &sync.Mutex{})
@@ -343,20 +345,14 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	keyFile, _, err := r.FormFile("key")
-	if err != nil {
-		http.Error(w, "select Vector's SSH private-key file", http.StatusBadRequest)
-		return
-	}
-	defer keyFile.Close()
-	key, err := io.ReadAll(io.LimitReader(keyFile, 64*1024+1))
+	key, uploadedKey, err := robotssh.ReadKey(r, serial)
 	defer func() {
 		for i := range key {
 			key[i] = 0
 		}
 	}()
-	if err != nil || len(key) > 64*1024 {
-		http.Error(w, "unable to read SSH key (maximum 64 KB)", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	signer, err := ssh.ParsePrivateKey(key)
@@ -397,9 +393,8 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 	client := ssh.NewClient(sshConn, channels, requests)
 	defer client.Close()
 	remote := eyeSSH{client: client}
-	identity, err := remote.Run("uname -a", nil)
-	if err != nil || !strings.Contains(identity, "Vector") {
-		http.Error(w, "the SSH device did not identify itself as Vector", http.StatusBadGateway)
+	if _, err := robotssh.VerifyAndRememberKey(serial, key, uploadedKey, func(command string) (string, error) { return remote.Run(command, nil) }); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	if !enabled {
@@ -407,12 +402,12 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"message": "Matching eyes restored and saved for reboot. Preset and custom eye colors now apply to both eyes."})
+		json.NewEncoder(w).Encode(map[string]interface{}{"key_saved": true, "message": "Matching eyes restored and saved for reboot. Preset and custom eye colors now apply to both eyes."})
 		return
 	}
 	if err := applyEyeOverlay(ctx, console, remote, state, data); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"message": "Separate eye colors applied and saved on Vector. They will survive a reboot even while Rocket Pod is offline."})
+	json.NewEncoder(w).Encode(map[string]interface{}{"key_saved": true, "message": "Separate eye colors applied and saved on Vector. They will survive a reboot even while Rocket Pod is offline."})
 }

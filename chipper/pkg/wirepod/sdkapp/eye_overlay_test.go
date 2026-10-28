@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kercre123/wire-pod/chipper/pkg/robotssh"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 )
 
@@ -203,6 +204,7 @@ func TestApplyEyeOverlayAndRollback(t *testing.T) {
 }
 
 func TestEyeOverlayAPIValidatesBeforeConnecting(t *testing.T) {
+	eyeOverlayTestKeyDirectory(t)
 	previous := vars.BotInfo
 	t.Cleanup(func() { vars.BotInfo = previous })
 	json.Unmarshal([]byte(`{"robots":[{"esn":"00test01","ip_address":"192.0.2.1"}]}`), &vars.BotInfo)
@@ -288,6 +290,7 @@ func TestEyeOverlayDestination(t *testing.T) {
 }
 
 func TestEyeOverlayAPIUsesDestinationAndRequiresKey(t *testing.T) {
+	eyeOverlayTestKeyDirectory(t)
 	previous, previousTransport := vars.BotInfo, http.DefaultTransport
 	t.Cleanup(func() { vars.BotInfo, http.DefaultTransport = previous, previousTransport })
 	json.Unmarshal([]byte(`{"robots":[{"esn":"00test01","ip_address":"192.0.2.1"}]}`), &vars.BotInfo)
@@ -332,9 +335,13 @@ func TestEyeOverlayAPIUsesDestinationAndRequiresKey(t *testing.T) {
 			var state struct {
 				Supported bool   `json:"supported"`
 				RobotIP   string `json:"robot_ip"`
+				KeySaved  bool   `json:"key_saved"`
 			}
 			if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil || !state.Supported || state.RobotIP != wantIP {
 				t.Fatalf("unexpected status: HTTP %d %s", status.Code, status.Body.String())
+			}
+			if state.KeySaved != robotssh.HasSavedKey("00test01") {
+				t.Fatal("status did not report whether this robot has a saved key")
 			}
 			query.Set("enabled", "false")
 			request := httptest.NewRequest(http.MethodPost, "/api-sdk/eye_overlay", strings.NewReader(query.Encode()))

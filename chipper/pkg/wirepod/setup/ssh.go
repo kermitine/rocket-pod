@@ -3,15 +3,17 @@ package botsetup
 import (
 	"context"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	scp "github.com/bramvdbogaerde/go-scp"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
+	"github.com/kercre123/wire-pod/chipper/pkg/robotssh"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	"golang.org/x/crypto/ssh"
 )
@@ -24,6 +26,7 @@ const BotSetupPath = "/data/pod-bot-install.sh"
 
 var SetupSSHStatus string = "not running"
 var SSHSettingUp bool = false
+var setupSSHMu sync.Mutex
 
 func doErr(err error, msg string) error {
 	SSHSettingUp = false
@@ -36,6 +39,7 @@ func runCmd(client *ssh.Client, cmd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer session.Close()
 	output, err := session.Output(cmd)
 	if err != nil {
 		return "", err
@@ -48,19 +52,26 @@ func setCPURAMfreq(client *ssh.Client, cpufreq string, ramfreq string, gov strin
 }
 
 func SetupBotViaSSH(ip string, key []byte) error {
+	return setupBotViaSSH(ip, "", key, true)
+}
+
+func setupBotViaSSH(ip, serial string, key []byte, uploadedKey bool) error {
 	if runtime.GOOS == "android" || runtime.GOOS == "ios" {
 		SetupScriptPath = vars.AndroidPath + "/static/pod-bot-install.sh"
 	}
 	if vars.IsPackagedLinux {
 		SetupScriptPath = "./pod-bot-install.sh"
 	}
-	if !SSHSettingUp {
+	if setupSSHMu.TryLock() {
+		defer setupSSHMu.Unlock()
+		SSHSettingUp = true
+		defer func() { SSHSettingUp = false }()
 		logger.Println("Setting up " + ip + " via SSH")
 		SetupSSHStatus = "Setting up SSH connection..."
 		CreateServerConfig()
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			doErr(err, "parsing priv key")
+			return doErr(err, "parsing priv key")
 		}
 		config := &ssh.ClientConfig{
 			User: "root",
@@ -71,23 +82,20 @@ func SetupBotViaSSH(ip string, key []byte) error {
 			HostKeyAlgorithms: []string{"ssh-rsa", "ecdsa-sha2-nistp256"},
 			Timeout:           time.Second * 5,
 		}
-		client, err := ssh.Dial("tcp", ip+":22", config)
+		client, err := ssh.Dial("tcp", net.JoinHostPort(ip, "22"), config)
 		if err != nil {
 			return doErr(err, "ssh dial")
 		}
+		defer client.Close()
 		SetupSSHStatus = "Checking if device is a Vector..."
-		output, err := runCmd(client, "uname -a")
-		if err != nil {
-			return doErr(err, "checking if vector")
-		}
-		if !strings.Contains(output, "Vector") {
-			return doErr(fmt.Errorf("the remote device is not a vector"), "checking if vector")
+		if _, err := robotssh.VerifyAndRememberKey(serial, key, uploadedKey, func(command string) (string, error) { return runCmd(client, command) }); err != nil {
+			return doErr(err, "checking Vector and saving SSH key")
 		}
 		SetupSSHStatus = "Checking if Vector is running CFW..."
 		// outputWired, _ := runCmd(client, "cat /etc/wired/webroot/index.html")
 		var doCloud bool = true
 		var initCommand string = "mount -o rw,remount / && mount -o rw,remount,exec /data && systemctl stop anki-robot.target mm-anki-camera mm-qcamera-daemon"
-		output, err = runCmd(client, "head -n1 /anki/bin/vic-gateway")
+		_, err = runCmd(client, "head -n1 /anki/bin/vic-gateway")
 		if err != nil {
 			if err.Error() == "Process exited with status 1" {
 				logger.Println("SSH setup: modern CFW detected, not copying vic-cloud")
@@ -221,26 +229,48 @@ func SetupBotViaSSH(ip string, key []byte) error {
 
 func SSHSetup(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api-ssh/robots":
+		sshRobotsAPI(w, r)
+		return
 	case r.URL.Path == "/api-ssh/repair_voice" || r.URL.Path == "/api-ssh/voice_repair_status" || r.URL.Path == "/api-ssh/check_voice":
 		voiceRepairAPI(w, r)
 		return
 	case r.URL.Path == "/api-ssh/setup":
-		ip := r.FormValue("ip")
-		if ip == "" {
-			fmt.Fprint(w, "error: must provide ip")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "use POST", http.StatusMethodNotAllowed)
 			return
 		}
-		key, _, err := r.FormFile("key")
+		r.Body = http.MaxBytesReader(w, r.Body, 128*1024)
+		if err := r.ParseMultipartForm(128 * 1024); err != nil {
+			http.Error(w, "upload an SSH key smaller than 64 KB", http.StatusBadRequest)
+			return
+		}
+		defer r.MultipartForm.RemoveAll()
+		serial, ip, err := sshSetupDestination(r.FormValue("serial"), r.FormValue("ip"))
 		if err != nil {
-			fmt.Fprint(w, "error: must provide ssh key ("+err.Error()+")")
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		keyBytes, err := io.ReadAll(key)
-		if len(keyBytes) < 5 {
-			fmt.Fprint(w, "error: must provide ssh key ("+err.Error()+")")
+		key, uploadedKey, err := robotssh.ReadKey(r, serial)
+		if err == nil {
+			_, err = ssh.ParsePrivateKey(key)
+		}
+		if err != nil {
+			for index := range key {
+				key[index] = 0
+			}
+			http.Error(w, "select Vector's saved key or upload an unencrypted SSH private-key file", http.StatusBadRequest)
 			return
 		}
-		go SetupBotViaSSH(ip, keyBytes)
+		go func() {
+			defer func() {
+				for index := range key {
+					key[index] = 0
+				}
+			}()
+			setupBotViaSSH(ip, serial, key, uploadedKey)
+		}()
 		fmt.Fprint(w, "running")
 		return
 	case r.URL.Path == "/api-ssh/get_setup_status":

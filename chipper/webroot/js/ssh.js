@@ -6,32 +6,61 @@ function updateSSHStatus(statusString) {
   setupStatus.appendChild(setupStatusP);
 }
 
-function doSSHSetup() {
-  const ip = document.getElementById("sshIp").value;
+async function doSSHSetup() {
+  const ip = document.getElementById("sshIp").value.trim();
+  const serial = document.getElementById("sshSavedRobot").value;
   const key = document.getElementById("sshKeyFile").files[0];
 
-  if (ip && key) {
+  if (ip && (key || serial)) {
+    if (key && key.size > 64 * 1024) return updateSSHStatus("The SSH key must be smaller than 64 KB.");
     const formData = new FormData();
-    formData.append("key", key);
+    if (key) formData.append("key", key);
     formData.append("ip", ip);
+    formData.append("serial", serial);
 
-    fetch("/api-ssh/setup", {
-      method: "POST",
-      body: formData,
-    })
-      .then((response) => response.text())
-      .then((response) => {
-        if (response.includes("running")) {
-          document.getElementById("oskrSetup").style.display = "none";
-          updateSSHSetup();
-          return;
-        } else {
-          updateSSHStatus(response);
-        }
+    try {
+      const result = await fetch("/api-ssh/setup", {
+        method: "POST",
+        body: formData,
       });
+      const response = await result.text();
+      if (result.ok && response === "running") {
+        document.getElementById("oskrSetup").style.display = "none";
+        updateSSHSetup();
+        return;
+      }
+      updateSSHStatus(response);
+    } catch (error) {
+      updateSSHStatus(error.message);
+    } finally {
+      document.getElementById("sshKeyFile").value = "";
+    }
   } else {
-    updateSSHStatus("You must enter an IP address and upload a key.");
+    updateSSHStatus("Enter Vector's IP address, then select a saved Vector or upload the SSH key once.");
   }
+}
+
+function updateSSHKeySelection() {
+  const selected = document.getElementById("sshSavedRobot").selectedOptions[0];
+  if (selected && selected.value) document.getElementById("sshIp").value = selected.dataset.ip;
+  document.getElementById("sshKeyFile").value = "";
+}
+
+function loadSavedSSHRobots(robots) {
+  const select = document.getElementById("sshSavedRobot");
+  const previous = select.value;
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "New Vector / upload a key";
+  select.replaceChildren(placeholder);
+  robots.filter(robot => robot.key_saved).forEach(robot => {
+    const option = document.createElement("option");
+    option.value = robot.esn;
+    option.dataset.ip = robot.ip_address;
+    option.textContent = `${robot.esn} (${robot.ip_address}) (saved SSH key)`;
+    select.appendChild(option);
+  });
+  if (Array.from(select.options).some(option => option.value === previous)) select.value = previous;
 }
 
 function updateSSHSetup() {
@@ -46,6 +75,7 @@ function updateSSHSetup() {
           );
           document.getElementById("oskrSetup").style.display = "block";
           clearInterval(interval);
+          loadVoiceRepair();
         } else if (response.includes("error")) {
           resp = response;
           if (response.includes("no route to host")) {
@@ -83,22 +113,25 @@ async function loadVoiceRepair() {
   if (voiceRepairBusy) return;
   try {
     const [info, config, status] = await Promise.all([
-      fetch("/api-sdk/get_sdk_info").then(voiceRepairResponse),
+      fetch("/api-ssh/robots", { cache: "no-store" }).then(voiceRepairResponse),
       fetch("/api/get_config").then(voiceRepairResponse),
       fetch("/api-ssh/voice_repair_status").then(voiceRepairResponse)
     ]);
     const select = document.getElementById("voiceRepairRobot");
     const previous = select.value;
+    loadSavedSSHRobots(info.robots || []);
     select.replaceChildren();
     (info.robots || []).forEach(robot => {
       const option = document.createElement("option");
       option.value = robot.esn;
       option.textContent = `${robot.esn} (${robot.ip_address})`;
       option.dataset.ip = robot.ip_address;
+      option.dataset.keySaved = robot.key_saved ? "true" : "false";
       select.appendChild(option);
     });
     if (Array.from(select.options).some(option => option.value === previous)) select.value = previous;
     if (!document.getElementById("voiceRepairRobotIP").value || select.value !== previous) updateVoiceRepairRobotIP();
+    updateVoiceRepairKeyStatus();
     const ip = document.getElementById("voiceRepairServerIP");
     if (!ip.value) ip.value = window.location.hostname.replace(/^\[|\]$/g, "");
     document.getElementById("voiceRepairIPField").hidden = config.server.epconfig;
@@ -119,6 +152,15 @@ async function loadVoiceRepair() {
 function updateVoiceRepairRobotIP() {
   const selected = document.getElementById("voiceRepairRobot").selectedOptions[0];
   document.getElementById("voiceRepairRobotIP").value = selected ? selected.dataset.ip : "";
+  document.getElementById("voiceRepairKey").value = "";
+  updateVoiceRepairKeyStatus();
+}
+
+function updateVoiceRepairKeyStatus() {
+  const selected = document.getElementById("voiceRepairRobot").selectedOptions[0];
+  displayMessage("voiceRepairKeyStatus", selected && selected.dataset.keySaved === "true"
+    ? "Saved SSH key available. Leave the file empty to reuse it, or upload a replacement. This key is shared with eye colors and bot setup."
+    : "Upload the SSH key once. After a successful connection it will be saved for voice repair, eye colors, and bot setup.");
 }
 
 async function checkVoiceConnection() {
@@ -142,12 +184,14 @@ async function repairVoiceConnection() {
   const serial = document.getElementById("voiceRepairRobot").value;
   const key = document.getElementById("voiceRepairKey").files[0];
   if (!serial) return displayMessage("voiceRepairStatus", "Authenticate Vector below first.");
-  if (!key) return displayMessage("voiceRepairStatus", "Select Vector's SSH key file to repair the connection.");
+  const selected = document.getElementById("voiceRepairRobot").selectedOptions[0];
+  if (!key && (!selected || selected.dataset.keySaved !== "true")) return displayMessage("voiceRepairStatus", "Select Vector's SSH key file once to save it in Rocket Pod.");
+  if (key && key.size > 64 * 1024) return displayMessage("voiceRepairStatus", "The SSH key must be smaller than 64 KB.");
   const body = new FormData();
   body.append("serial", serial);
   body.append("robot_ip", document.getElementById("voiceRepairRobotIP").value.trim());
   body.append("server_ip", document.getElementById("voiceRepairServerIP").value.trim());
-  body.append("key", key);
+  if (key) body.append("key", key);
   setVoiceRepairBusy(true);
   displayMessage("voiceRepairStatus", "Starting voice connection repair...");
   try {
@@ -158,6 +202,8 @@ async function repairVoiceConnection() {
   } catch (error) {
     displayMessage("voiceRepairStatus", error.message);
     setVoiceRepairBusy(false);
+  } finally {
+    document.getElementById("voiceRepairKey").value = "";
   }
 }
 
@@ -169,6 +215,7 @@ async function pollVoiceRepair() {
       setTimeout(pollVoiceRepair, 1000);
     } else {
       setVoiceRepairBusy(false);
+      await loadVoiceRepair();
     }
   } catch (error) {
     displayMessage("voiceRepairStatus", `Unable to read repair progress: ${error.message}. Reopen Bot Setup to check again.`);

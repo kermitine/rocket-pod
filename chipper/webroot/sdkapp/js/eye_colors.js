@@ -1,5 +1,6 @@
 let eyeOverlayState = null;
 let eyeOverlayBusy = false;
+let eyeOverlayKeySaved = false;
 const eyeOverlaySerial = new URLSearchParams(window.location.search).get("serial");
 const eyeColorStorageKey = "rocket-pod-eye-colors:" + eyeOverlaySerial;
 const eyeOverlayIPStorageKey = "rocket-pod-eye-ip:" + eyeOverlaySerial;
@@ -24,6 +25,13 @@ function eyeOverlayDestinationChanged() {
 
 function eyeOverlayMessage(message) {
   document.getElementById("eyeOverlayStatus").textContent = message;
+}
+
+function setEyeOverlayKeySaved(saved) {
+  eyeOverlayKeySaved = saved === true;
+  document.getElementById("eyeOverlayKeyStatus").textContent = eyeOverlayKeySaved
+    ? "SSH key saved in Rocket Pod for this Vector. Leave the file empty to reuse it, or select a new key to replace it."
+    : "No SSH key saved for this Vector yet. Select the key once when applying colors or restoring matching eyes.";
 }
 
 function setEyeOverlayBusy(busy) {
@@ -51,6 +59,7 @@ async function loadEyeOverlayStatus() {
     eyeOverlayState = await fetch("/api-sdk/eye_overlay_status?serial=" + encodeURIComponent(eyeOverlaySerial) + destination, {
       cache: "no-store"
     }).then(eyeOverlayResponse);
+    setEyeOverlayKeySaved(eyeOverlayState.key_saved);
     if (!ip && eyeOverlayState.robot_ip) {
       document.getElementById("eyeOverlayRobotIP").placeholder = eyeOverlayState.robot_ip;
     }
@@ -61,8 +70,8 @@ async function loadEyeOverlayStatus() {
     eyeOverlayMessage(!eyeOverlayState.supported
       ? eyeOverlayState.message
       : eyeOverlayState.enabled
-        ? "A WireOS eye overlay is active. Select Vector's SSH key to save new colors or switch back to matching eyes."
-        : "Ready. Choose two colors and select Vector's SSH key to save them on Vector, including after reboot.");
+        ? "A WireOS eye overlay is active. You can save new colors or switch back to matching eyes."
+        : "Ready. Choose two colors to save them on Vector, including after reboot.");
   } catch (error) {
     eyeOverlayState = { supported: false, enabled: false };
     eyeOverlayMessage(error.message);
@@ -73,15 +82,15 @@ async function loadEyeOverlayStatus() {
 async function applyDifferentEyeColors() {
   if (eyeOverlayBusy) return;
   const key = document.getElementById("eyeOverlayKey").files[0];
-  if (!key) return eyeOverlayMessage("Select Vector's SSH private-key file first.");
-  if (key.size > 64 * 1024) return eyeOverlayMessage("The SSH key must be smaller than 64 KB.");
+  if (!key && !eyeOverlayKeySaved) return eyeOverlayMessage("Select Vector's SSH private-key file once to save it in Rocket Pod.");
+  if (key && key.size > 64 * 1024) return eyeOverlayMessage("The SSH key must be smaller than 64 KB.");
   const left = document.getElementById("leftEyeColor").value;
   const right = document.getElementById("rightEyeColor").value;
   const body = new FormData();
   body.append("enabled", "true");
   body.append("left", left);
   body.append("right", right);
-  body.append("key", key);
+  if (key) body.append("key", key);
   body.append("robot_ip", eyeOverlayRobotIP());
   setEyeOverlayBusy(true);
   eyeOverlayMessage("Uploading and applying eye colors...");
@@ -89,6 +98,7 @@ async function applyDifferentEyeColors() {
     const result = await fetch("/api-sdk/eye_overlay?serial=" + encodeURIComponent(eyeOverlaySerial), {
       method: "POST", body
     }).then(eyeOverlayResponse);
+    setEyeOverlayKeySaved(result.key_saved);
     eyeOverlayState = { supported: true, enabled: true, custom: true };
     document.querySelectorAll('input[name="eye"]').forEach(input => { input.checked = false; });
     try { localStorage.setItem(eyeColorStorageKey, JSON.stringify({ left, right })); } catch (_) { /* Storage can be disabled. */ }
@@ -107,29 +117,32 @@ async function applyDifferentEyeColors() {
 async function restoreMatchingEyes() {
   if (eyeOverlayBusy) return false;
   const key = document.getElementById("eyeOverlayKey").files[0];
-  if (!key) {
-    eyeOverlayMessage("Select Vector's SSH private-key file to restore matching eyes and save that choice for reboot.");
+  if (!key && !eyeOverlayKeySaved) {
+    eyeOverlayMessage("Select Vector's SSH private-key file once to save it in Rocket Pod and restore matching eyes.");
     return false;
   }
-  if (key.size > 64 * 1024) {
+  if (key && key.size > 64 * 1024) {
     eyeOverlayMessage("The SSH key must be smaller than 64 KB.");
     return false;
   }
   const body = new FormData();
   body.append("enabled", "false");
   body.append("robot_ip", eyeOverlayRobotIP());
-  body.append("key", key);
+  if (key) body.append("key", key);
   setEyeOverlayBusy(true);
   eyeOverlayMessage("Restoring and saving matching eyes on Vector...");
   try {
     const result = await fetch("/api-sdk/eye_overlay?serial=" + encodeURIComponent(eyeOverlaySerial), {
       method: "POST", body
     }).then(eyeOverlayResponse);
+    setEyeOverlayKeySaved(result.key_saved);
     eyeOverlayState = { supported: true, enabled: false };
     eyeOverlayMessage(result.message);
     if (typeof getCurrentSettings === "function") getCurrentSettings();
     return true;
   } catch (error) {
+    // Authentication may have saved a replacement key before a later step failed.
+    await loadEyeOverlayStatus();
     eyeOverlayMessage(error.message);
     return false;
   } finally {

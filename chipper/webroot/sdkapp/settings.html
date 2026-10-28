@@ -151,8 +151,10 @@
           <label for="eyeOverlayKey">Vector's SSH private-key file</label><br>
           <input id="eyeOverlayKey" type="file" aria-describedby="eyeOverlayKeyHelp">
           <p id="eyeOverlayKeyHelp">Colors are saved on Vector and survive reboot, even while Rocket Pod is offline.
-            Select the key to apply colors or restore matching eyes, including before choosing a preset or single custom color.
-            The key is used for this change and is not saved.</p>
+            Upload the SSH key once; Rocket Pod saves it for this Vector and reuses it after program or computer restarts.
+            The saved key is shared with voice repair and bot setup.
+            Upload a new key to replace the saved one after a successful SSH connection.</p>
+          <p id="eyeOverlayKeyStatus" role="status" aria-live="polite">Checking for a saved SSH key...</p>
           <button id="applyEyeOverlay" onclick="applyDifferentEyeColors()" disabled>Apply different eye colors</button>
           <button id="disableEyeOverlay" onclick="restoreMatchingEyes()" disabled>Use matching eyes</button>
           <button id="checkEyeOverlay" onclick="loadEyeOverlayStatus()">Check connection again</button>

@@ -21,6 +21,7 @@ import (
 
 	scp "github.com/bramvdbogaerde/go-scp"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
+	"github.com/kercre123/wire-pod/chipper/pkg/robotssh"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	"golang.org/x/crypto/ssh"
 )
@@ -123,15 +124,17 @@ func voiceRepairAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "enter this Rocket Pod server's LAN IP address", http.StatusBadRequest)
 		return
 	}
-	file, _, err := r.FormFile("key")
+	key, uploadedKey, err := robotssh.ReadKey(r, serial)
+	started := false
+	defer func() {
+		if !started {
+			for index := range key {
+				key[index] = 0
+			}
+		}
+	}()
 	if err != nil {
-		http.Error(w, "select Vector's SSH key file", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-	key, err := io.ReadAll(io.LimitReader(file, 64*1024+1))
-	if err != nil || len(key) > 64*1024 {
-		http.Error(w, "unable to read SSH key (maximum 64 KB)", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	signer, err := ssh.ParsePrivateKey(key)
@@ -148,6 +151,7 @@ func voiceRepairAPI(w http.ResponseWriter, r *http.Request) {
 	voiceRepair.status = voiceRepairStatus{Running: true, Message: "Connecting to Vector..."}
 	status := voiceRepair.status
 	voiceRepair.Unlock()
+	started = true
 	go func() {
 		defer func() {
 			for index := range key {
@@ -156,7 +160,7 @@ func voiceRepairAPI(w http.ResponseWriter, r *http.Request) {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		if err := repairVoiceConnection(ctx, serial, ip, serverIP, signer); err != nil {
+		if err := repairVoiceConnection(ctx, serial, ip, serverIP, signer, key, uploadedKey); err != nil {
 			setVoiceRepairStatus(voiceRepairStatus{Message: "Repair could not finish.", Error: err.Error()})
 		}
 	}()
@@ -193,7 +197,7 @@ func (client voiceSSHClient) Upload(ctx context.Context, path string, data []byt
 	return transfer.CopyFile(ctx, bytes.NewReader(data), path, "0644")
 }
 
-func repairVoiceConnection(ctx context.Context, serial, robotIP string, serverIP net.IP, signer ssh.Signer) error {
+func repairVoiceConnection(ctx context.Context, serial, robotIP string, serverIP net.IP, signer ssh.Signer, key []byte, uploadedKey bool) error {
 	address := net.JoinHostPort(robotIP, "22")
 	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", address)
 	if err != nil {
@@ -212,9 +216,8 @@ func repairVoiceConnection(ctx context.Context, serial, robotIP string, serverIP
 	client := ssh.NewClient(sshConn, channels, requests)
 	defer client.Close()
 	remote := voiceSSHClient{client: client}
-	identity, err := remote.Run("uname -a")
-	if err != nil || !strings.Contains(identity, "Vector") {
-		return fmt.Errorf("the selected SSH device did not identify itself as Vector")
+	if _, err := robotssh.VerifyAndRememberKey(serial, key, uploadedKey, remote.Run); err != nil {
+		return err
 	}
 	setVoiceRepairStatus(voiceRepairStatus{Running: true, Message: "Checking the server address and certificate..."})
 	host := serverIP.String()

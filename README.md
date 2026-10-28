@@ -11,7 +11,7 @@ The installation guide exists on the wiki: [Installation guide](https://github.c
 ## Repairing voice connections
 
 Open **Bot Setup → Voice connection** and click **Check voice connection**.
-For an OSKR/dev-unlocked Vector, select his SSH key file and click
+For an OSKR/dev-unlocked Vector, reuse his saved SSH key or upload it once, then click
 **Repair voice connection** to update his saved server address and certificate.
 Both addresses are editable: **Vector IP (SSH destination)** selects the robot
 to repair, and **New Rocket Pod server IP (certificate)** sets the address saved
@@ -20,7 +20,14 @@ address used to open Rocket Pod; enter the server's LAN IP if you opened it usin
 a hostname. A successfully verified new robot IP is saved for future connections.
 Vector briefly reconnects, then Rocket
 Pod reports the connection-test result. Existing connection files are backed up,
-and the uploaded SSH key is not saved.
+and the SSH key is saved after a successful connection. Eye colors, voice repair,
+and initial SSH bot setup share the same saved key per Vector. Existing keys
+saved through eye colors are reused automatically. In **Configure an OSKR/dev-unlocked
+robot**, select a Vector with a saved key, or upload it once for a new robot.
+Initial setup reads Vector's serial over SSH so that key becomes available to
+the other features after authentication. Uploading a new key in any of these
+features replaces the shared key only after a successful SSH connection and
+robot-identity check. Saved keys survive Rocket Pod and host restarts.
 
 ## Reminder reconnect delay
 
@@ -70,7 +77,13 @@ overlay at its center; extreme expressions can move an eye across that split.
 
 Rocket Pod uploads `/data/data/customFaceOverlay.jpg` and enables the overlay.
 An existing custom image is backed up as `customFaceOverlay.jpg.rocket-pod-backup`
-before the first replacement. The SSH key is used for the request and is not saved.
+before the first replacement. After a successful SSH connection, Rocket Pod saves
+the key per robot in its persistent `jdocs/ssh-keys` directory. Eye-color
+changes, restoring matching eyes, voice repair, and SSH bot setup reuse that key, including after Rocket Pod
+or its host restarts. The UI shows whether a key is saved. To replace it, select
+a new key when applying colors or restoring matching eyes; a failed SSH connection
+keeps the previous key. Key files use owner-only permissions where supported,
+are excluded from Git, and are stored in the existing persistent Docker volume.
 The overlay settings are saved in Vector's `consoleVarsAnim.ini`, which
 [WireOS loads before starting the animation engine](https://github.com/os-vector/wire-os-victor/blob/main/animProcess/src/cozmoAnim/cozmoAnimMain.cpp#L149).
 Colors survive a reboot even while Rocket Pod is offline. Apply the colors once
@@ -84,8 +97,8 @@ to use the saved address. After editing, click **Check connection again**. A
 working override is remembered per robot in this browser; it does not change
 the address saved in Bot Setup.
 **Use matching eyes**, a preset, or submitting the single custom color disables
-the overlay and saves that choice for reboot. Select Vector's SSH key again
-before restoring matching eyes or choosing a shared color while an overlay is active.
+the overlay and saves that choice for reboot using the saved SSH key. If no key
+has been saved yet, select it once before changing an active overlay.
 
 ## Wiki
 

@@ -20,6 +20,7 @@
 /chipper/customIntents.json
 /chipper/botConfig.json
 /chipper/jdocs/*.json
+/chipper/jdocs/ssh-keys/
 /chipper/nvm
 /chipper/apiConfig.json
 /chipper/session-certs/0*

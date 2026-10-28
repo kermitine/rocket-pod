@@ -133,7 +133,8 @@
 		  </div>
 		  <label for="voiceRepairKey">Vector&rsquo;s SSH key (for repair)</label><br />
 		  <input id="voiceRepairKey" type="file" /><br />
-		  <small class="desc">For OSKR/dev-unlocked robots. The key is used for this repair only. Current connection files are backed up.</small>
+		  <small class="desc">For OSKR/dev-unlocked robots. Reuses the saved key shared with eye colors and bot setup. Upload a new key to replace it after a successful SSH connection. Current connection files are backed up.</small>
+		  <p id="voiceRepairKeyStatus" role="status" aria-live="polite"></p>
 		  <button id="voiceCheckButton" type="button" onclick="checkVoiceConnection()">Check voice connection</button>
 		  <button id="voiceRepairButton" type="button" onclick="repairVoiceConnection()">Repair voice connection</button>
 		  <div id="voiceRepairStatus" role="status" aria-live="polite"></div>
@@ -154,11 +155,13 @@
           <small class="desc">Works with firmware 1.4 and above.</small>
           <div id="oskrSetupProgress"></div>
           <div id="oskrSetup">
-            <p><b>If you have an OSKR/dev-unlocked bot;</b> enter the bot's IP
-              address and upload the bot's SSH key here, then click "Set up
-              bot". After that, use the above section to finish setting up
-              your bot.</p>
+            <p><b>If you have an OSKR/dev-unlocked bot;</b> select a Vector with a saved SSH key,
+              or upload the key once for a new Vector. Enter the bot's IP address and click "Set up bot".
+              The same saved key is used for eye colors and voice repair, including after Rocket Pod restarts.
+              Upload a replacement whenever needed. After setup, use the above section to finish authentication.</p>
             <hr class="small-hr">
+            <label for="sshSavedRobot">Saved SSH key</label><br />
+            <select class="tinput" id="sshSavedRobot" onchange="updateSSHKeySelection()"><option value="">New Vector / upload a key</option></select><br />
             <input class="tinput" type="text" id="sshIp" name="sshIp" placeholder="Bot IP address" /><br />
             <input type="file" id="sshKeyFile" name="sshKeyFile" /><br />
             <hr class="small-hr">
