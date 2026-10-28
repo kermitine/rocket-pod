@@ -4,16 +4,21 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { test } = require("node:test");
 
-async function loadEyeControls({ supported = true, enabled = false, fail = false } = {}) {
+async function loadEyeControls({ supported = true, enabled = false, fail = false, rememberedIP } = {}) {
   const elements = Object.fromEntries([
-    "eyeOverlayStatus", "leftEyeColor", "rightEyeColor", "eyeOverlayKey",
+    "eyeOverlayStatus", "leftEyeColor", "rightEyeColor", "eyeOverlayKey", "eyeOverlayRobotIP",
     "applyEyeOverlay", "disableEyeOverlay", "checkEyeOverlay"
   ].map(id => [id, { value: "", disabled: false, files: [] }]));
   elements.leftEyeColor.value = "#00aaff";
   elements.rightEyeColor.value = "#ff9900";
+  Object.defineProperty(elements.eyeOverlayKey, "value", {
+    get() { return this.filename || ""; },
+    set(value) { this.filename = value; if (!value) this.files = []; }
+  });
   const calls = [];
   const sharedColors = [];
   const storage = new Map();
+  if (rememberedIP) storage.set("rocket-pod-eye-ip:Vector A", rememberedIP);
   const radios = [{ checked: true }];
   const context = vm.createContext({
     window: { location: { search: "?serial=Vector%20A" } },
@@ -24,13 +29,15 @@ async function loadEyeControls({ supported = true, enabled = false, fail = false
     URLSearchParams, FormData,
     localStorage: {
       getItem: key => storage.get(key) || null,
-      setItem: (key, value) => storage.set(key, value)
+      setItem: (key, value) => storage.set(key, value),
+      removeItem: key => storage.delete(key)
     },
     sendForm: url => sharedColors.push(url),
     fetch: async (url, options = {}) => {
       calls.push({ url, ...options });
       if (url.includes("eye_overlay_status")) {
-        return { ok: true, json: async () => ({ supported, enabled, message: "Overlay unavailable" }) };
+        const ip = new URL(url, "http://rocket-pod").searchParams.get("robot_ip") || "192.0.2.1";
+        return { ok: true, json: async () => ({ supported, enabled, robot_ip: ip, message: "Overlay unavailable" }) };
       }
       if (fail) return { ok: false, text: async () => "WireOS rejected the change" };
       return { ok: true, json: async () => ({ message: "Applied" }) };
@@ -80,14 +87,19 @@ test("missing and oversized SSH keys do not start an upload", async () => {
 
 test("a preset turns off the overlay before changing the shared color", async () => {
   const app = await loadEyeControls({ enabled: true });
+  app.elements.eyeOverlayKey.files = [new Blob(["private key"])];
   await app.context.sendPresetEyeColor(4);
   const disable = app.calls.find(call => call.method === "POST");
   assert.equal(disable.body.get("enabled"), "false");
+  assert.equal(await disable.body.get("key").text(), "private key");
+  assert.equal(app.elements.eyeOverlayKey.value, "");
+  assert.equal(app.elements.eyeOverlayKey.files.length, 0);
   assert.deepEqual(app.sharedColors, ["/api-sdk/eye_color?color=4"]);
 });
 
 test("a failed overlay disable prevents a misleading shared color change", async () => {
   const app = await loadEyeControls({ enabled: true, fail: true });
+  app.elements.eyeOverlayKey.files = [new Blob(["private key"])];
   await app.context.sendPresetEyeColor(4);
   assert.equal(app.sharedColors.length, 0);
   assert.equal(app.elements.eyeOverlayStatus.textContent, "WireOS rejected the change");
@@ -99,6 +111,60 @@ test("standard eye colors remain available on firmware without overlays", async 
   await app.context.sendPresetEyeColor(2);
   assert.equal(app.calls.filter(call => call.method === "POST").length, 0);
   assert.deepEqual(app.sharedColors, ["/api-sdk/eye_color?color=2"]);
+});
+
+test("an IP override is checked and used for uploading and disabling the overlay", async () => {
+  const app = await loadEyeControls({ enabled: true });
+  assert.equal(app.elements.eyeOverlayRobotIP.placeholder, "192.0.2.1");
+  assert.equal(app.elements.eyeOverlayRobotIP.value, "");
+  app.elements.eyeOverlayRobotIP.value = " 192.0.2.42 ";
+  app.context.eyeOverlayDestinationChanged();
+  assert.equal(app.elements.applyEyeOverlay.disabled, true);
+  assert.equal(app.elements.disableEyeOverlay.disabled, true);
+  assert.equal(app.elements.eyeOverlayRobotIP.disabled, false);
+  await app.context.loadEyeOverlayStatus();
+  assert.equal(new URL(app.calls.at(-1).url, "http://rocket-pod").searchParams.get("robot_ip"), "192.0.2.42");
+  assert.equal(app.elements.applyEyeOverlay.disabled, false);
+  app.elements.eyeOverlayKey.files = [new Blob(["private key"])];
+  await app.context.applyDifferentEyeColors();
+  app.elements.eyeOverlayKey.files = [new Blob(["private key"])];
+  await app.context.restoreMatchingEyes();
+  const changes = app.calls.filter(call => call.method === "POST");
+  assert.deepEqual(changes.map(call => call.body.get("robot_ip")), ["192.0.2.42", "192.0.2.42"]);
+  assert.equal(app.storage.get("rocket-pod-eye-ip:Vector A"), "192.0.2.42");
+});
+
+test("a remembered IP is loaded and clearing it restores the saved robot address", async () => {
+  const app = await loadEyeControls({ rememberedIP: "192.0.2.42" });
+  assert.equal(app.elements.eyeOverlayRobotIP.value, "192.0.2.42");
+  assert.equal(new URL(app.calls[0].url, "http://rocket-pod").searchParams.get("robot_ip"), "192.0.2.42");
+  app.elements.eyeOverlayRobotIP.value = "";
+  app.context.eyeOverlayDestinationChanged();
+  await app.context.loadEyeOverlayStatus();
+  assert.equal(new URL(app.calls.at(-1).url, "http://rocket-pod").searchParams.has("robot_ip"), false);
+  assert.equal(app.elements.eyeOverlayRobotIP.placeholder, "192.0.2.1");
+  assert.equal(app.storage.has("rocket-pod-eye-ip:Vector A"), false);
+});
+
+test("an unsuccessful connection check keeps the address editable and does not remember it", async () => {
+  const app = await loadEyeControls({ supported: false });
+  app.elements.eyeOverlayRobotIP.value = "192.0.2.42";
+  await app.context.loadEyeOverlayStatus();
+  assert.equal(app.elements.eyeOverlayRobotIP.disabled, false);
+  assert.equal(app.elements.applyEyeOverlay.disabled, true);
+  assert.equal(app.storage.size, 0);
+});
+
+test("restoring matching eyes or selecting a preset requires the key before changing a saved overlay", async () => {
+  const app = await loadEyeControls({ enabled: true });
+  assert.equal(await app.context.restoreMatchingEyes(), false);
+  await app.context.sendPresetEyeColor(4);
+  assert.equal(app.calls.filter(call => call.method === "POST").length, 0);
+  assert.equal(app.sharedColors.length, 0);
+  assert.match(app.elements.eyeOverlayStatus.textContent, /SSH private-key.*reboot/);
+  app.elements.eyeOverlayKey.files = [{ size: 65537 }];
+  assert.equal(await app.context.restoreMatchingEyes(), false);
+  assert.equal(app.calls.filter(call => call.method === "POST").length, 0);
 });
 
 test("the custom color picker wraps rounded red to zero before sending", async () => {

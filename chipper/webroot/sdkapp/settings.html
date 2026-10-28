@@ -143,10 +143,16 @@
           </label>
         </div>
         <div class="center">
+          <label for="eyeOverlayRobotIP">Vector IP (eye controls and SSH destination)</label><br>
+          <input id="eyeOverlayRobotIP" class="tinput" type="text" placeholder="Saved Vector IP"
+            aria-describedby="eyeOverlayRobotIPHelp" oninput="eyeOverlayDestinationChanged()"><br>
+          <p id="eyeOverlayRobotIPHelp">Leave blank to use Vector's saved address. After editing, click
+            Check connection again. A working override is remembered in this browser for this robot.</p>
           <label for="eyeOverlayKey">Vector's SSH private-key file</label><br>
           <input id="eyeOverlayKey" type="file" aria-describedby="eyeOverlayKeyHelp">
-          <p id="eyeOverlayKeyHelp">The key is used for this upload and is not saved.
-            Your selected colors are remembered in this browser. Reapply after a robot restart if needed.</p>
+          <p id="eyeOverlayKeyHelp">Colors are saved on Vector and survive reboot, even while Rocket Pod is offline.
+            Select the key to apply colors or restore matching eyes, including before choosing a preset or single custom color.
+            The key is used for this change and is not saved.</p>
           <button id="applyEyeOverlay" onclick="applyDifferentEyeColors()" disabled>Apply different eye colors</button>
           <button id="disableEyeOverlay" onclick="restoreMatchingEyes()" disabled>Use matching eyes</button>
           <button id="checkEyeOverlay" onclick="loadEyeOverlayStatus()">Check connection again</button>

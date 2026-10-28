@@ -174,6 +174,11 @@ func (remote eyeSSH) Run(command string, input []byte) (string, error) {
 }
 
 func applyEyeOverlay(ctx context.Context, console eyeConsole, remote eyeOverlayRemote, state eyeOverlayState, data []byte) (err error) {
+	boot, err := readEyeOverlayBootConfig(remote)
+	if err != nil {
+		return err
+	}
+	bootChanged := false
 	// Keep the original custom image, and a separate copy for rollback of this request.
 	present, err := remote.Run("if [ -f "+eyeOverlayPath+" ]; then printf present; fi", nil)
 	if err != nil {
@@ -195,6 +200,10 @@ func applyEyeOverlay(ctx context.Context, console eyeConsole, remote eyeOverlayR
 		}
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		var bootErr error
+		if bootChanged {
+			bootErr = boot.restore(remote)
+		}
 		restore := "rm -f " + eyeOverlayPath
 		if present == "present" {
 			restore = "cp -p " + eyeOverlayPath + ".rocket-pod-previous " + eyeOverlayPath
@@ -208,7 +217,7 @@ func applyEyeOverlay(ctx context.Context, console eyeConsole, remote eyeOverlayR
 			enabled = 1
 		}
 		enabledErr := console.set(rollbackCtx, "ProcFace_CustomEyes", enabled)
-		if fileErr != nil || flavorErr != nil || opacityErr != nil || reloadErr != nil || enabledErr != nil {
+		if bootErr != nil || fileErr != nil || flavorErr != nil || opacityErr != nil || reloadErr != nil || enabledErr != nil {
 			err = fmt.Errorf("%w; could not fully restore the previous overlay, check Vector's eye controls", err)
 		}
 	}()
@@ -224,7 +233,57 @@ func applyEyeOverlay(ctx context.Context, console eyeConsole, remote eyeOverlayR
 	if err = console.reload(ctx); err != nil {
 		return err
 	}
-	return console.set(ctx, "ProcFace_CustomEyes", 1)
+	if err = console.set(ctx, "ProcFace_CustomEyes", 1); err != nil {
+		return err
+	}
+	// Even a failed SSH response can mean that the file was replaced.
+	bootChanged = true
+	return boot.save(remote, true)
+}
+
+func disablePersistentEyeOverlay(ctx context.Context, console eyeConsole, remote eyeOverlayRemote, state eyeOverlayState) (err error) {
+	boot, err := readEyeOverlayBootConfig(remote)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		bootErr := boot.restore(remote)
+		enabled := 0.0
+		if state.Enabled {
+			enabled = 1
+		}
+		consoleErr := console.set(rollbackCtx, "ProcFace_CustomEyes", enabled)
+		if bootErr != nil || consoleErr != nil {
+			err = fmt.Errorf("%w; could not fully restore the previous eye settings", err)
+		}
+	}()
+	if err = boot.save(remote, false); err != nil {
+		return err
+	}
+	return console.set(ctx, "ProcFace_CustomEyes", 0)
+}
+
+func eyeOverlayDestination(serial, requested string) (string, string, error) {
+	for _, robot := range vars.BotInfo.Robots {
+		if serial == "" || !strings.EqualFold(robot.Esn, serial) {
+			continue
+		}
+		address := strings.TrimSpace(requested)
+		if address == "" {
+			address = strings.TrimSpace(robot.IPAddress)
+		}
+		ip := net.ParseIP(address)
+		if ip == nil || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() {
+			return "", "", fmt.Errorf("enter Vector's LAN IP address for the eye controls and SSH destination")
+		}
+		return strings.ToLower(robot.Esn), ip.String(), nil
+	}
+	return "", "", fmt.Errorf("choose an authenticated Vector")
 }
 
 func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
@@ -248,17 +307,9 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	serial := r.FormValue("serial")
-	var ip string
-	for _, robot := range vars.BotInfo.Robots {
-		if serial != "" && strings.EqualFold(robot.Esn, serial) && net.ParseIP(robot.IPAddress) != nil {
-			ip = robot.IPAddress
-			serial = strings.ToLower(robot.Esn)
-			break
-		}
-	}
-	if ip == "" {
-		http.Error(w, "choose an authenticated Vector", http.StatusBadRequest)
+	serial, ip, err := eyeOverlayDestination(r.FormValue("serial"), r.FormValue("robot_ip"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -267,10 +318,10 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 	if statusRequest {
 		state, err := console.state(ctx)
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"supported": false, "message": err.Error()})
+			json.NewEncoder(w).Encode(map[string]interface{}{"supported": false, "robot_ip": ip, "message": err.Error()})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"supported": true, "enabled": state.Enabled, "custom": state.Flavor == 8})
+		json.NewEncoder(w).Encode(map[string]interface{}{"supported": true, "enabled": state.Enabled, "custom": state.Flavor == 8, "robot_ip": ip})
 		return
 	}
 	lock, _ := eyeOverlayLocks.LoadOrStore(serial, &sync.Mutex{})
@@ -279,22 +330,18 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer lock.(*sync.Mutex).Unlock()
-	if r.FormValue("enabled") == "false" {
-		if err := console.set(ctx, "ProcFace_CustomEyes", 0); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"message": "Matching eyes restored. Preset and custom eye colors now apply to both eyes."})
-		return
-	}
-	if r.FormValue("enabled") != "true" {
+	enabled := r.FormValue("enabled") == "true"
+	if !enabled && r.FormValue("enabled") != "false" {
 		http.Error(w, "enabled must be true or false", http.StatusBadRequest)
 		return
 	}
-	data, err := twoColorEyeOverlay(r.FormValue("left"), r.FormValue("right"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var data []byte
+	if enabled {
+		data, err = twoColorEyeOverlay(r.FormValue("left"), r.FormValue("right"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	keyFile, _, err := r.FormFile("key")
 	if err != nil {
@@ -355,9 +402,17 @@ func eyeOverlayAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the SSH device did not identify itself as Vector", http.StatusBadGateway)
 		return
 	}
+	if !enabled {
+		if err := disablePersistentEyeOverlay(ctx, console, remote, state); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"message": "Matching eyes restored and saved for reboot. Preset and custom eye colors now apply to both eyes."})
+		return
+	}
 	if err := applyEyeOverlay(ctx, console, remote, state, data); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"message": "Separate eye colors applied. WireOS may reset the overlay when Vector restarts; reapply here if needed."})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Separate eye colors applied and saved on Vector. They will survive a reboot even while Rocket Pod is offline."})
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image/jpeg"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -78,15 +79,43 @@ func TestEyeConsoleRejectsUnconfirmedResponses(t *testing.T) {
 }
 
 type fakeEyeRemote struct {
-	commands []string
-	upload   []byte
-	present  bool
-	fail     string
+	commands   []string
+	upload     []byte
+	present    bool
+	fail       string
+	boot       []byte
+	bootExists bool
+	failBoot   bool
+	platform   string
 }
 
 func (remote *fakeEyeRemote) Run(command string, input []byte) (string, error) {
 	remote.commands = append(remote.commands, command)
-	if len(input) != 0 {
+	if strings.Contains(command, "platform_config.json") {
+		if remote.platform != "" {
+			return remote.platform, nil
+		}
+		return `{"DataPlatformCachePath":"/data/data/com.anki.victor/cache"}`, nil
+	}
+	if strings.HasPrefix(command, "if [ -e ") && strings.Contains(command, "consoleVarsAnim.ini") {
+		if remote.bootExists {
+			return "present\n" + string(remote.boot), nil
+		}
+		return "missing\n", nil
+	}
+	if strings.Contains(command, "consoleVarsAnim.ini.rocket-pod-tmp") && strings.HasPrefix(command, "set -e\n") {
+		remote.boot, remote.bootExists = append([]byte{}, input...), true
+		if remote.failBoot {
+			remote.failBoot = false
+			return "", fmt.Errorf("connection lost after saving boot settings")
+		}
+		return "", nil
+	}
+	if strings.HasPrefix(command, "rm -f ") && strings.Contains(command, "consoleVarsAnim.ini") {
+		remote.boot, remote.bootExists = nil, false
+		return "", nil
+	}
+	if len(input) != 0 && strings.Contains(command, eyeOverlayPath+".rocket-pod-tmp") {
 		remote.upload = append([]byte(nil), input...)
 	}
 	if remote.fail != "" && strings.HasPrefix(command, remote.fail) {
@@ -99,7 +128,7 @@ func (remote *fakeEyeRemote) Run(command string, input []byte) (string, error) {
 }
 
 func TestApplyEyeOverlayAndRollback(t *testing.T) {
-	for _, scenario := range []string{"success", "upload_failure", "enable_failure", "enable_failure_no_original"} {
+	for _, scenario := range []string{"success", "upload_failure", "enable_failure", "enable_failure_no_original", "boot_failure", "boot_failure_no_original"} {
 		t.Run(scenario, func(t *testing.T) {
 			values := map[string]float64{"ProcFace_CustomEyes": 0, "ProcFace_FlavorOfGay": 2, "ProcFace_CustomEyeOpacity": 0.8}
 			reloads := 0
@@ -132,7 +161,8 @@ func TestApplyEyeOverlayAndRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			remote := &fakeEyeRemote{present: scenario != "enable_failure_no_original"}
+			originalBoot := []byte("; existing preferences\nOtherSetting = 7\nProcFace_CustomEyes = false\n")
+			remote := &fakeEyeRemote{present: !strings.HasSuffix(scenario, "no_original"), boot: originalBoot, bootExists: !strings.HasSuffix(scenario, "no_original"), failBoot: strings.HasPrefix(scenario, "boot_failure")}
 			if scenario == "upload_failure" {
 				remote.fail = "umask"
 			}
@@ -145,6 +175,9 @@ func TestApplyEyeOverlayAndRollback(t *testing.T) {
 				if err != nil || values["ProcFace_CustomEyes"] != 1 || values["ProcFace_FlavorOfGay"] != 8 || values["ProcFace_CustomEyeOpacity"] != 1 || reloads != 1 {
 					t.Fatalf("overlay was not applied: values=%v reloads=%d error=%v", values, reloads, err)
 				}
+				if !remote.bootExists || !bytes.Equal(remote.boot, eyeOverlayBootContents(originalBoot, true)) {
+					t.Fatalf("did not save eye colors for reboot: %s", remote.boot)
+				}
 			} else {
 				if err == nil {
 					t.Fatal("reported success after a failure")
@@ -152,7 +185,7 @@ func TestApplyEyeOverlayAndRollback(t *testing.T) {
 				if values["ProcFace_CustomEyes"] != 0 || values["ProcFace_FlavorOfGay"] != 2 || values["ProcFace_CustomEyeOpacity"] != 0.8 {
 					t.Fatalf("did not restore previous console values: %v", values)
 				}
-				if strings.HasPrefix(scenario, "enable_failure") {
+				if strings.HasPrefix(scenario, "enable_failure") || strings.HasPrefix(scenario, "boot_failure") {
 					last := remote.commands[len(remote.commands)-1]
 					if remote.present && last != "cp -p "+eyeOverlayPath+".rocket-pod-previous "+eyeOverlayPath {
 						t.Fatalf("did not restore the previous image: %s", last)
@@ -160,6 +193,9 @@ func TestApplyEyeOverlayAndRollback(t *testing.T) {
 					if !remote.present && last != "rm -f "+eyeOverlayPath {
 						t.Fatalf("did not remove the failed new image: %s", last)
 					}
+				}
+				if remote.bootExists != !strings.HasSuffix(scenario, "no_original") || (remote.bootExists && !bytes.Equal(remote.boot, originalBoot)) {
+					t.Fatalf("did not restore the original boot settings: %s", remote.boot)
 				}
 			}
 		})
@@ -170,11 +206,16 @@ func TestEyeOverlayAPIValidatesBeforeConnecting(t *testing.T) {
 	previous := vars.BotInfo
 	t.Cleanup(func() { vars.BotInfo = previous })
 	json.Unmarshal([]byte(`{"robots":[{"esn":"00test01","ip_address":"192.0.2.1"}]}`), &vars.BotInfo)
-	for _, scenario := range []string{"wrong_method", "missing_robot", "invalid_color", "invalid_key", "oversized"} {
+	for _, scenario := range []string{"wrong_method", "missing_robot", "invalid_ip", "invalid_color", "invalid_key", "oversized"} {
 		t.Run(scenario, func(t *testing.T) {
 			var body bytes.Buffer
 			writer := multipart.NewWriter(&body)
 			writer.WriteField("enabled", "true")
+			if scenario == "invalid_ip" {
+				writer.WriteField("robot_ip", "not-an-ip")
+			} else {
+				writer.WriteField("robot_ip", "192.0.2.42")
+			}
 			left := "#00aaff"
 			if scenario == "invalid_color" {
 				left = "invalid"
@@ -203,6 +244,108 @@ func TestEyeOverlayAPIValidatesBeforeConnecting(t *testing.T) {
 			SdkapiHandler(response, request)
 			if response.Code != wantStatus {
 				t.Fatalf("got HTTP %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestEyeOverlayDestination(t *testing.T) {
+	previous := vars.BotInfo
+	t.Cleanup(func() { vars.BotInfo = previous })
+	json.Unmarshal([]byte(`{"robots":[{"esn":"00Test01","ip_address":"192.0.2.1"},{"esn":"00test02","ip_address":"stale"}]}`), &vars.BotInfo)
+	for _, scenario := range []struct {
+		name, serial, requested, wantIP string
+	}{
+		{"saved", "00test01", "", "192.0.2.1"},
+		{"whitespace", "00test01", "  ", "192.0.2.1"},
+		{"override", "00test01", " 192.0.2.42 ", "192.0.2.42"},
+		{"ipv6", "00test01", "2001:db8::42", "2001:db8::42"},
+		{"invalid_saved_with_override", "00test02", "192.0.2.42", "192.0.2.42"},
+		{"invalid_saved", "00test02", "", ""},
+		{"unknown_robot", "unknown", "192.0.2.42", ""},
+		{"missing_robot", "", "192.0.2.42", ""},
+		{"hostname", "00test01", "vector.local", ""},
+		{"port", "00test01", "192.0.2.42:22", ""},
+		{"loopback", "00test01", "127.0.0.1", ""},
+		{"ipv6_loopback", "00test01", "::1", ""},
+		{"unspecified", "00test01", "0.0.0.0", ""},
+		{"ipv6_unspecified", "00test01", "::", ""},
+		{"multicast", "00test01", "224.0.0.1", ""},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			serial, ip, err := eyeOverlayDestination(scenario.serial, scenario.requested)
+			if scenario.wantIP == "" {
+				if err == nil {
+					t.Fatalf("accepted invalid destination %q for %q", scenario.requested, scenario.serial)
+				}
+				return
+			}
+			if err != nil || ip != scenario.wantIP || serial != strings.ToLower(scenario.serial) {
+				t.Fatalf("got serial=%q ip=%q error=%v", serial, ip, err)
+			}
+		})
+	}
+}
+
+func TestEyeOverlayAPIUsesDestinationAndRequiresKey(t *testing.T) {
+	previous, previousTransport := vars.BotInfo, http.DefaultTransport
+	t.Cleanup(func() { vars.BotInfo, http.DefaultTransport = previous, previousTransport })
+	json.Unmarshal([]byte(`{"robots":[{"esn":"00test01","ip_address":"192.0.2.1"}]}`), &vars.BotInfo)
+	for _, requested := range []string{"", "192.0.2.42"} {
+		t.Run("ip_"+requested, func(t *testing.T) {
+			wantIP := requested
+			if wantIP == "" {
+				wantIP = "192.0.2.1"
+			}
+			disabled := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Host != net.JoinHostPort(wantIP, "8889") {
+					t.Errorf("eye controls used unexpected host %q", r.Host)
+				}
+				switch r.URL.Path {
+				case "/consolevarget":
+					fmt.Fprint(w, "1<br>")
+				case "/consolefunclist":
+					fmt.Fprint(w, "LOOK_LoadFaceOverlay<br>")
+				case "/consolevarset":
+					if r.URL.Query().Get("key") != "ProcFace_CustomEyes" || r.URL.Query().Get("value") != "0" {
+						t.Errorf("unexpected disable request: %s", r.URL)
+					}
+					disabled = true
+					fmt.Fprint(w, "0<br>")
+				default:
+					t.Errorf("unexpected console path: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				if address != net.JoinHostPort(wantIP, "8889") {
+					return nil, fmt.Errorf("unexpected destination %s", address)
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+			}}
+			defer transport.CloseIdleConnections()
+			http.DefaultTransport = transport
+			query := url.Values{"serial": {"00TEST01"}, "robot_ip": {requested}}
+			status := httptest.NewRecorder()
+			SdkapiHandler(status, httptest.NewRequest(http.MethodGet, "/api-sdk/eye_overlay_status?"+query.Encode(), nil))
+			var state struct {
+				Supported bool   `json:"supported"`
+				RobotIP   string `json:"robot_ip"`
+			}
+			if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil || !state.Supported || state.RobotIP != wantIP {
+				t.Fatalf("unexpected status: HTTP %d %s", status.Code, status.Body.String())
+			}
+			query.Set("enabled", "false")
+			request := httptest.NewRequest(http.MethodPost, "/api-sdk/eye_overlay", strings.NewReader(query.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			SdkapiHandler(response, request)
+			if response.Code != http.StatusBadRequest || disabled || !strings.Contains(response.Body.String(), "SSH private-key") {
+				t.Fatalf("disable without a key must leave the eyes unchanged: HTTP %d %s", response.Code, response.Body.String())
+			}
+			if vars.BotInfo.Robots[0].IPAddress != "192.0.2.1" {
+				t.Fatal("eye overlay override changed the saved robot address")
 			}
 		})
 	}

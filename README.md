@@ -71,10 +71,21 @@ overlay at its center; extreme expressions can move an eye across that split.
 Rocket Pod uploads `/data/data/customFaceOverlay.jpg` and enables the overlay.
 An existing custom image is backed up as `customFaceOverlay.jpg.rocket-pod-backup`
 before the first replacement. The SSH key is used for the request and is not saved.
-Color choices are remembered per robot in this browser. WireOS may reset its
-console settings when Vector restarts; reapply the colors here if needed.
+The overlay settings are saved in Vector's `consoleVarsAnim.ini`, which
+[WireOS loads before starting the animation engine](https://github.com/os-vector/wire-os-victor/blob/main/animProcess/src/cozmoAnim/cozmoAnimMain.cpp#L149).
+Colors survive a reboot even while Rocket Pod is offline. Apply the colors once
+after updating Rocket Pod to save any previously applied colors for reboot.
+Only the eye-overlay settings are updated; other saved animation settings are
+preserved, and the original settings file is backed up before its first change.
+Color picker choices are also remembered per robot in this browser.
+**Vector IP (eye controls and SSH destination)** overrides the selected robot's
+saved address for checking, applying, and disabling the overlay. Leave it blank
+to use the saved address. After editing, click **Check connection again**. A
+working override is remembered per robot in this browser; it does not change
+the address saved in Bot Setup.
 **Use matching eyes**, a preset, or submitting the single custom color disables
-the overlay and restores the regular shared eye color. Disabling needs no SSH key.
+the overlay and saves that choice for reboot. Select Vector's SSH key again
+before restoring matching eyes or choosing a shared color while an overlay is active.
 
 ## Wiki
 
