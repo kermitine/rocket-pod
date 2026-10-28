@@ -234,6 +234,7 @@ func InjectTestNBAUpdate(robotESN string) error {
 		FaceData:                faceData,
 		Source:                  "test",
 		configurationGeneration: currentConfigurationGeneration(),
+		nbaGameID:               game.ID,
 	}
 	if enqueueTask(task) {
 		logger.Println("Productivity: Random NBA test update queued")
@@ -281,6 +282,8 @@ func InjectTestNBAFinalUpdate(robotESN string) error {
 		Pages:                   nbaFinalTaskPages(scoreFace, performerFace, phrase, performer),
 		Source:                  "test",
 		configurationGeneration: currentConfigurationGeneration(),
+		nbaGameID:               game.ID,
+		nbaFinal:                true,
 	}
 	if enqueueTask(task) {
 		logger.Println("Productivity: Random NBA final score test queued")
@@ -451,7 +454,7 @@ func checkNBAGames() {
 			continue
 		}
 		kind, phrase, shouldNotify := nbaNotificationForGame(game, config, now)
-		if !shouldNotify {
+		if !shouldNotify || (kind != "final" && nbaGameIsMuted(targetRobot, game.ID)) {
 			continue
 		}
 		if isBedtimeForRobot(targetRobot, now) {
@@ -498,6 +501,8 @@ func checkNBAGames() {
 			Pages:                   pages,
 			Source:                  "nba",
 			configurationGeneration: generation,
+			nbaGameID:               game.ID,
+			nbaFinal:                kind == "final",
 		}
 		if enqueueSportsNotification(task, game.ID) {
 			markNBANotified(game.ID, kind, now)

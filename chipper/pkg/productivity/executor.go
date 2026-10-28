@@ -48,6 +48,8 @@ type Task struct {
 	ExpiresAt               time.Time
 	configurationGeneration uint64
 	sportsNotification      *pendingSportsNotification
+	nbaGameID               string
+	nbaFinal                bool
 }
 
 type TaskPage struct {
@@ -316,7 +318,7 @@ func taskIsExpiredAt(task Task, now time.Time) bool {
 
 func taskCanRun(task Task) bool {
 	now := time.Now()
-	return taskIsCurrent(task) && !taskIsSuperseded(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
+	return taskIsCurrent(task) && !taskIsSuperseded(task) && !nbaTaskIsMuted(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
 }
 
 func getReminderState(id string) (bool, bool) {
@@ -339,8 +341,8 @@ func getReminderState(id string) (bool, bool) {
 func processTask(task Task, faceAlreadyFound bool) (faceFound bool) {
 	beginSportsTaskAttempt(task)
 	defer finishSportsTaskAttempt(task)
-	if taskIsSuperseded(task) {
-		logger.Println("Productivity: Discarding superseded sports notification " + task.ID)
+	if taskIsSuperseded(task) || nbaTaskIsMuted(task) {
+		logger.Println("Productivity: Discarding canceled sports notification " + task.ID)
 		return
 	}
 	if taskSuppressedAtBedtime(task, time.Now()) {
@@ -453,6 +455,27 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 	if !taskCanRun(task) {
 		return
 	}
+
+	// Keep behavior control on the task context so muting can cancel a blocked
+	// SayText call and still release control cleanly to stop the robot's actions.
+	taskCtx := ctx
+	presentationCtx, stopPresentation := context.WithCancel(taskCtx)
+	defer stopPresentation()
+	stopMuteListener := startNBAMuteListener(presentationCtx, robot.Conn, task, stopPresentation)
+	defer func() {
+		if !stopMuteListener() {
+			return
+		}
+		if controlHeld {
+			if err := releaseBehaviorControl(bcClient); err != nil {
+				logger.Println("Productivity: Could not release interrupted NBA presentation: " + err.Error())
+				return
+			}
+			controlHeld = false
+		}
+		confirmNBAGameMuted(taskCtx, robot)
+	}()
+	ctx = presentationCtx
 
 	pagesHandled := len(task.Pages) > 0
 	if pagesHandled {

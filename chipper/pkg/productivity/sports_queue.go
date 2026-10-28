@@ -14,6 +14,7 @@ type pendingSportsNotification struct {
 	key            sportsNotificationKey
 	superseded     chan struct{}
 	retryScheduled bool // Protected by taskQueueMu.
+	nbaFinal       bool
 }
 
 var (
@@ -26,7 +27,7 @@ var (
 func enqueueTask(task Task) bool {
 	taskQueueMu.Lock()
 	defer taskQueueMu.Unlock()
-	if taskIsSuperseded(task) {
+	if taskIsSuperseded(task) || nbaTaskIsMutedLocked(task) {
 		return false
 	}
 	select {
@@ -45,7 +46,7 @@ func enqueueSportsNotification(task Task, eventID string) bool {
 		return enqueueTask(task)
 	}
 	taskQueueMu.Lock()
-	if !taskIsCurrent(task) {
+	if !taskIsCurrent(task) || nbaTaskIsMutedLocked(task) {
 		taskQueueMu.Unlock()
 		return false
 	}
@@ -70,7 +71,7 @@ drain:
 		if previous != nil {
 			close(previous.superseded)
 		}
-		task.sportsNotification = &pendingSportsNotification{key: key, superseded: make(chan struct{})}
+		task.sportsNotification = &pendingSportsNotification{key: key, superseded: make(chan struct{}), nbaFinal: task.nbaFinal}
 		pendingSportsNotifications[key] = task.sportsNotification
 		if !queueFull {
 			pending = append(pending, task)
