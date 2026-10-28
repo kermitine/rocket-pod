@@ -95,31 +95,31 @@
         <div style="text-align: left;" class="center">
           <label>
             <input type="radio" name="eye" id="Teal" value="Teal"
-              onclick="sendForm('/api-sdk/eye_color?color=0')">Teal<br>
+              onclick="sendPresetEyeColor(0)">Teal<br>
           </label>
           <label>
             <input type="radio" name="eye" id="Orange" value="Orange"
-              onclick="sendForm('/api-sdk/eye_color?color=1')">Orange<br>
+              onclick="sendPresetEyeColor(1)">Orange<br>
           </label>
           <label>
             <input type="radio" name="eye" id="Yellow" value="Yellow"
-              onclick="sendForm('/api-sdk/eye_color?color=2')">Yellow<br>
+              onclick="sendPresetEyeColor(2)">Yellow<br>
           </label>
           <label>
             <input type="radio" name="eye" id="Lime Green" value="Lime Green"
-              onclick="sendForm('/api-sdk/eye_color?color=3')">Lime Green<br>
+              onclick="sendPresetEyeColor(3)">Lime Green<br>
           </label>
           <label>
             <input type="radio" name="eye" id="Azure Blue" value="Azure Blue"
-              onclick="sendForm('/api-sdk/eye_color?color=4')">Azure Blue<br>
+              onclick="sendPresetEyeColor(4)">Azure Blue<br>
           </label>
           <label>
             <input type="radio" name="eye" id="Purple" value="Purple"
-              onclick="sendForm('/api-sdk/eye_color?color=5')">Purple<br>
+              onclick="sendPresetEyeColor(5)">Purple<br>
           </label>
           <label>
             <input type="radio" name="eye" id="Other Green" value="Other Green"
-              onclick="sendForm('/api-sdk/eye_color?color=6')">Other Green<br>
+              onclick="sendPresetEyeColor(6)">Other Green<br>
           </label>
         </div>
         <br />
@@ -128,6 +128,29 @@
         <div class="center" id="picker"></div><br />
         <div class="center">
           <button class="settings" onclick="sendCustomColor()">Submit</button>
+        </div>
+        <hr class="small-hr">
+        <h4 class="center">Heterochromia (different eye colors)</h4>
+        <p class="center">For WireOS 3.0.1.26 or newer. Choose a color for each eye;
+          Vector keeps his normal blinking and expressions. Left and right are as you look at Vector.
+          An eye may pick up the other color if it moves across the center.</p>
+        <div class="center" style="display:flex; flex-wrap:wrap; justify-content:center; gap:24px;">
+          <label for="leftEyeColor">Left eye<br>
+            <input id="leftEyeColor" type="color" value="#00aaff" style="width:80px; height:48px;">
+          </label>
+          <label for="rightEyeColor">Right eye<br>
+            <input id="rightEyeColor" type="color" value="#ff9900" style="width:80px; height:48px;">
+          </label>
+        </div>
+        <div class="center">
+          <label for="eyeOverlayKey">Vector's SSH private-key file</label><br>
+          <input id="eyeOverlayKey" type="file" aria-describedby="eyeOverlayKeyHelp">
+          <p id="eyeOverlayKeyHelp">The key is used for this upload and is not saved.
+            Your selected colors are remembered in this browser. Reapply after a robot restart if needed.</p>
+          <button id="applyEyeOverlay" onclick="applyDifferentEyeColors()" disabled>Apply different eye colors</button>
+          <button id="disableEyeOverlay" onclick="restoreMatchingEyes()" disabled>Use matching eyes</button>
+          <button id="checkEyeOverlay" onclick="loadEyeOverlayStatus()">Check connection again</button>
+          <p id="eyeOverlayStatus" role="status" aria-live="polite">Checking WireOS eye controls...</p>
         </div>
         <hr>
       </div>
@@ -396,6 +419,7 @@
   <script src="./js/httprequest.js"></script>
   <script src="./js/iro.min.js"></script>
   <script src="./js/common.js"></script>
+  <script src="./js/eye_colors.js"></script>
   <script src="../js/battery.js"></script>
   <script src="./js/main.js"></script>
   <script src="./js/faces.js"></script>

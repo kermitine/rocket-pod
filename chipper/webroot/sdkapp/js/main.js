@@ -210,11 +210,14 @@ function sendTimeZone() {
   };
 }
 
-function sendCustomColor() {
+async function sendCustomColor() {
+  if (!(await prepareSharedEyeColor())) return;
   var pickerHue = colorPicker.color.hue;
   var pickerSat = colorPicker.color.saturation;
   var sendHue = pickerHue / 360;
   var sendHue = sendHue.toFixed(3);
+  // Rounding near 360 degrees can produce 1.000; use the equivalent red at 0.
+  if (Number(sendHue) === 1) sendHue = "0.000";
   var sendSat = pickerSat / 100;
   var sendSat = sendSat.toFixed(3);
   let data = "hue=" + sendHue + "&" + "sat=" + sendSat;
@@ -380,7 +383,9 @@ function getCurrentSettings() {
 
     var s2 = document.getElementById("currentEyeColor");
     const s2P = document.createElement("p");
-    if (eyeColorT != "none" && eyeColorT != "Custom") {
+    if (eyeOverlayState && eyeOverlayState.enabled) {
+      document.querySelectorAll('input[name="eye"]').forEach(input => { input.checked = false; });
+    } else if (eyeColorT != "none" && eyeColorT != "Custom") {
       document.getElementById(eyeColorT).checked = true;
     }
 

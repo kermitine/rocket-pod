@@ -25,6 +25,10 @@ import (
 var serverFiles string = "./webroot/sdkapp"
 
 func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api-sdk/eye_overlay" || r.URL.Path == "/api-sdk/eye_overlay_status" {
+		eyeOverlayAPI(w, r)
+		return
+	}
 	robotObj, robotIndex, err := getRobot(r.FormValue("serial"))
 	robot := robotObj.Vector
 	ctx := robotObj.Ctx
@@ -70,10 +74,16 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "done")
 		return
 	case r.URL.Path == "/api-sdk/custom_eye_color":
-		hue := r.FormValue("hue")
-		sat := r.FormValue("sat")
-		setCustomEyeColor(robotObj, hue, sat)
-		fmt.Fprintf(w, hue+sat)
+		hue, sat, err := customEyeColorValues(r.FormValue("hue"), r.FormValue("sat"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := setCustomEyeColor(robotObj, hue, sat); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		fmt.Fprint(w, "done")
 		return
 	case r.URL.Path == "/api-sdk/volume":
 		volume := r.FormValue("volume")

@@ -54,6 +54,28 @@ Sleep requests use the behavior engine on port 8888 and verify the returned
 does not exist, so the HTTP status alone does not confirm a successful request.
 Morning ends bedtime enforcement without forcing him awake.
 
+## Eye colors
+
+Custom red eye colors now wrap the end of the hue wheel back to its start.
+This avoids a WireOS animation color-conversion edge case that can show white
+eyes during image-based animations while normal eyes remain red. If your red
+was saved before this fix, submit it again in **Bot Settings → Eye Color**.
+
+In **Bot Settings → Eye Color → Heterochromia**, choose left and right colors,
+select Vector's SSH private-key file, then click **Apply different eye colors**.
+Left and right are as you look at Vector. This uses the eye overlay feature in
+[WireOS 3.0.1.26 or newer](https://github.com/os-vector/wire-os/releases/tag/3.0.1.26)
+and keeps his normal blinking and animated eye shapes. The two colors split the
+overlay at its center; extreme expressions can move an eye across that split.
+
+Rocket Pod uploads `/data/data/customFaceOverlay.jpg` and enables the overlay.
+An existing custom image is backed up as `customFaceOverlay.jpg.rocket-pod-backup`
+before the first replacement. The SSH key is used for the request and is not saved.
+Color choices are remembered per robot in this browser. WireOS may reset its
+console settings when Vector restarts; reapply the colors here if needed.
+**Use matching eyes**, a preset, or submitting the single custom color disables
+the overlay and restores the regular shared eye color. Disabling needs no SSH key.
+
 ## Wiki
 
 Check out the [wiki](https://github.com/kercre123/wire-pod/wiki) for more information on the upstream project, installation, troubleshooting, development, and generally helpful tips.
