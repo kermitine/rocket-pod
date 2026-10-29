@@ -172,9 +172,9 @@ func WhisperInstallSupport() (bool, string) {
 	if os.Getenv("WHISPER_SERVER") != "" {
 		return false, "WHISPER_SERVER must point to a working whisper-server executable."
 	}
-	for _, command := range []string{"cmake", "c++"} {
+	for _, command := range []string{"cmake", "c++", "git"} {
 		if _, err := exec.LookPath(command); err != nil {
-			return false, "Automatic Whisper setup needs CMake and a C++ compiler. Docker images include the runtime; on Linux install cmake and build-essential, or set WHISPER_SERVER to an existing whisper-server."
+			return false, "Automatic Whisper setup needs CMake, a C++ compiler, and Git. Docker images include the runtime; on Linux install cmake, build-essential, and git, or set WHISPER_SERVER to an existing whisper-server."
 		}
 	}
 	return true, "The first selection also builds the local Whisper runtime. This may take several minutes."

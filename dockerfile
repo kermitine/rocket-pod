@@ -136,7 +136,7 @@ FROM ubuntu:22.04 AS whisper-builder
 # Keep inference outside the Go binary so Vosk and Whisper can switch at runtime.
 ARG WHISPER_VERSION=1.7.6
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential ca-certificates cmake curl \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates cmake curl git \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /src/whisper \
     && curl -fsSL "https://codeload.github.com/ggml-org/whisper.cpp/tar.gz/refs/tags/v${WHISPER_VERSION}" \

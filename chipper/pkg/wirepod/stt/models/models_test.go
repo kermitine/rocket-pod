@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -169,5 +170,51 @@ func TestWhisperRuntimeInstallationIntegration(t *testing.T) {
 	}
 	if output, err := exec.Command(path, "--help").CombinedOutput(); err != nil {
 		t.Fatalf("installed runtime does not run after moving out of staging: %v: %s", err, output)
+	}
+}
+
+func TestWhisperInstallSupportRequiresGitForSourceBuild(t *testing.T) {
+	modelPaths(t)
+	t.Setenv("WHISPER_SERVER", "")
+	toolsDir := t.TempDir()
+	t.Setenv("PATH", toolsDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	addTool := func(name string) {
+		t.Helper()
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(toolsDir, name), []byte("stub"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addTool("cmake")
+	addTool("c++")
+	if ok, reason := WhisperInstallSupport(); ok || !strings.Contains(reason, "Git") {
+		t.Fatalf("source build without Git was accepted: available=%v, reason=%q", ok, reason)
+	}
+	addTool("git")
+	if ok, reason := WhisperInstallSupport(); !ok {
+		t.Fatalf("source build dependencies were rejected: %s", reason)
+	}
+}
+
+func TestInstalledWhisperRuntimeDoesNotRequireBuildTools(t *testing.T) {
+	modelPaths(t)
+	t.Setenv("WHISPER_SERVER", "")
+	toolsDir := t.TempDir()
+	t.Setenv("PATH", toolsDir)
+	name := "whisper-server"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, name), []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if ok, reason := WhisperInstallSupport(); !ok {
+		t.Fatalf("installed runtime incorrectly requires build dependencies: %s", reason)
 	}
 }

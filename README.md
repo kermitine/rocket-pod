@@ -28,8 +28,8 @@ Vector's built-in “Hey Vector” detection.
 New Docker builds include both recognition runtimes. Downloaded models and
 settings use the existing persistent data volume. Rebuild/recreate an older
 container once to get the Whisper runtime. With a source installation, the panel
-can build local Whisper automatically when CMake and a C++ compiler are installed
-(`sudo apt install cmake build-essential` on Debian/Ubuntu). The build uses the
+can build local Whisper automatically when CMake, a C++ compiler, and Git are installed
+(`sudo apt install cmake build-essential git` on Debian/Ubuntu). The build uses the
 pinned whisper.cpp v1.7.6 release and may take several minutes. You can also set
 `WHISPER_SERVER` to an existing compatible `whisper-server` executable. Whisper
 runs on loopback and keeps its model loaded between commands. Builds that only
