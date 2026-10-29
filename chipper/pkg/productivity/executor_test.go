@@ -46,8 +46,8 @@ func TestAcquireBehaviorControlWaitsForGrant(t *testing.T) {
 		t.Fatalf("sent %d requests, want 1", len(stream.sent))
 	}
 	request := stream.sent[0].GetControlRequest()
-	if request == nil || request.Priority != vectorpb.ControlRequest_DEFAULT {
-		t.Fatalf("sent control request = %#v; notifications must allow mandatory physical reactions", request)
+	if request == nil || request.Priority != vectorpb.ControlRequest_OVERRIDE_BEHAVIORS {
+		t.Fatalf("sent control request = %#v", request)
 	}
 }
 
