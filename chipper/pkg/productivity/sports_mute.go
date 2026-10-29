@@ -11,8 +11,7 @@ import (
 )
 
 const (
-	sportsButtonClickWindow       = 500 * time.Millisecond
-	sportsButtonDebounce          = 40 * time.Millisecond
+	sportsTouchHoldDuration       = time.Second
 	sportsMuteConfirmationTimeout = 12 * time.Second
 )
 
@@ -84,36 +83,43 @@ drain:
 	}
 }
 
-type sportsButtonClickDetector struct {
+type sportsTouchHoldDetector struct {
 	initialized bool
-	pressed     bool
-	pressedAt   time.Time
+	touched     bool
+	touchedAt   time.Time
 }
 
-func (detector *sportsButtonClickDetector) observe(state *vectorpb.RobotState, now time.Time) bool {
-	if state == nil {
+func (detector *sportsTouchHoldDetector) observe(state *vectorpb.RobotState, now time.Time) bool {
+	if state == nil || state.GetTouchData() == nil {
+		// Missing sensor data cannot establish continuous contact.
+		*detector = sportsTouchHoldDetector{}
 		return false
 	}
-	pressed := reminderRobotStateHas(state, vectorpb.RobotStatus_ROBOT_STATUS_IS_BUTTON_PRESSED)
+	touched := state.GetTouchData().GetIsBeingTouched()
 	if !detector.initialized {
-		detector.initialized, detector.pressed = true, pressed
+		// A touch already in progress when delivery starts must be released first.
+		detector.initialized, detector.touched = true, touched
 		return false
 	}
-	if pressed == detector.pressed {
+	if !touched {
+		detector.touched = false
+		detector.touchedAt = time.Time{}
 		return false
 	}
-	detector.pressed = pressed
-	if pressed {
-		detector.pressedAt = now
+	if !detector.touched {
+		detector.touched = true
+		detector.touchedAt = now
 		return false
 	}
-	// Count one completed click. Ignore holds, switch bounce, repeated samples,
-	// and a button already held when notification delivery begins.
-	duration := now.Sub(detector.pressedAt)
-	return !detector.pressedAt.IsZero() && duration >= sportsButtonDebounce && duration <= sportsButtonClickWindow
+	if detector.touchedAt.IsZero() || now.Sub(detector.touchedAt) < sportsTouchHoldDuration {
+		return false
+	}
+	// Mute while the sensor is still touched, once per continuous hold.
+	detector.touchedAt = time.Time{}
+	return true
 }
 
-// Listen only during presentation, so clicks while idle, driving, or delivering
+// Listen only during presentation, so touches while idle, driving, or delivering
 // unrelated reminders cannot mute a game. Join cleanup before the next task so
 // its speech can never be silenced by a late audio-stop request.
 func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfaceClient, task Task, stopPresentation context.CancelFunc) func() bool {
@@ -126,21 +132,21 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 	})
 	if err != nil {
 		stopStream()
-		logger.Println("Productivity: Sports mute button listener unavailable: " + err.Error())
+		logger.Println("Productivity: Sports mute touch listener unavailable: " + err.Error())
 		return func() bool { return false }
 	}
 	done := make(chan struct{})
 	muted := false // Read only after done closes.
 	go func() {
 		defer close(done)
-		var detector sportsButtonClickDetector
+		var detector sportsTouchHoldDetector
 		for {
 			response, err := stream.Recv()
 			if streamCtx.Err() != nil {
 				return
 			}
 			if err != nil {
-				logger.Println("Productivity: Sports mute button listener stopped: " + err.Error())
+				logger.Println("Productivity: Sports mute touch listener stopped: " + err.Error())
 				return
 			}
 			if !detector.observe(response.GetEvent().GetRobotState(), time.Now()) {

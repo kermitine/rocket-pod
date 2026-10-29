@@ -43,51 +43,87 @@ func sportsMuteTestTask(source, eventID, robot, kind string) Task {
 	return task
 }
 
-func sportsButtonState(pressed bool) *vectorpb.RobotState {
-	state := &vectorpb.RobotState{}
-	if pressed {
-		state.Status = uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_BUTTON_PRESSED)
-	}
-	return state
+func sportsTouchState(touched bool) *vectorpb.RobotState {
+	return &vectorpb.RobotState{TouchData: &vectorpb.TouchData{IsBeingTouched: touched}}
 }
 
-func TestSportsMuteRequiresOneCompletedClickDuringDelivery(t *testing.T) {
+func TestSportsMuteRequiresOneSecondContinuousTouchDuringDelivery(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		pressed []bool
+		touched []bool
 		times   []int // Milliseconds since the first sample.
-		clicks  int
+		mutesAt []int
 	}{
-		{"single click", []bool{false, true, false}, []int{0, 100, 200}, 1},
-		{"press without release", []bool{false, true, true}, []int{0, 100, 200}, 0},
-		{"held button", []bool{false, true, true, true, false}, []int{0, 100, 200, 300, 1200}, 0},
-		{"switch bounce", []bool{false, true, false, true, false}, []int{0, 100, 110, 120, 130}, 0},
-		{"held before delivery", []bool{true, true, false}, []int{0, 100, 200}, 0},
-		{"new click after held at startup", []bool{true, true, false, true, false}, []int{0, 100, 200, 300, 400}, 1},
-		{"repeated sensor samples", []bool{false, true, true, false, false}, []int{0, 100, 150, 200, 250}, 1},
-		{"minimum click duration", []bool{false, true, false}, []int{0, 100, 140}, 1},
-		{"maximum click duration", []bool{false, true, false}, []int{0, 100, 600}, 1},
-		{"release without press", []bool{false, false}, []int{0, 100}, 0},
+		{"one second without release", []bool{false, true, true, true}, []int{0, 100, 1099, 1100}, []int{1100}},
+		{"short tap", []bool{false, true, false}, []int{0, 100, 200}, nil},
+		{"less than one second", []bool{false, true, true}, []int{0, 100, 1099}, nil},
+		{"release before threshold", []bool{false, true, false, false}, []int{0, 100, 1099, 1500}, nil},
+		{"release at threshold", []bool{false, true, false}, []int{0, 100, 1100}, nil},
+		{"interrupted touches do not add up", []bool{false, true, true, false, true, true, false}, []int{0, 100, 700, 800, 900, 1500, 1600}, nil},
+		{"touch held before delivery", []bool{true, true, true, false}, []int{0, 1000, 2000, 2100}, nil},
+		{"fresh touch after held at startup", []bool{true, true, false, true, true}, []int{0, 1000, 1100, 1200, 2200}, []int{2200}},
+		{"long hold triggers once", []bool{false, true, true, true, true, false}, []int{0, 100, 1100, 1200, 3000, 3100}, []int{1100}},
+		{"separate holds", []bool{false, true, true, false, true, true}, []int{0, 100, 1100, 1200, 1300, 2300}, []int{1100, 2300}},
+		{"untouched", []bool{false, false}, []int{0, 2000}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var detector sportsButtonClickDetector
+			var detector sportsTouchHoldDetector
 			now := time.Now()
 			if detector.observe(nil, now) {
 				t.Fatal("missing robot state triggered a mute")
 			}
-			got := 0
-			for index, pressed := range test.pressed {
-				if detector.observe(sportsButtonState(pressed), now.Add(time.Duration(test.times[index])*time.Millisecond)) {
-					if pressed {
-						t.Fatal("mute triggered before the button was released")
-					}
-					got++
+			var got []int
+			for index, touched := range test.touched {
+				if detector.observe(sportsTouchState(touched), now.Add(time.Duration(test.times[index])*time.Millisecond)) {
+					got = append(got, test.times[index])
 				}
 			}
-			if got != test.clicks {
-				t.Fatalf("completed clicks=%d, want %d", got, test.clicks)
+			if !reflect.DeepEqual(got, test.mutesAt) {
+				t.Fatalf("muted at %v ms, want %v ms", got, test.mutesAt)
 			}
 		})
+	}
+}
+
+func TestSportsMuteMissingTouchDataResetsHold(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state *vectorpb.RobotState
+	}{
+		{"missing robot state", nil},
+		{"missing touch data", &vectorpb.RobotState{}},
+		{"button press without touch data", &vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_BUTTON_PRESSED)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var detector sportsTouchHoldDetector
+			now := time.Now()
+			for index, state := range []*vectorpb.RobotState{
+				sportsTouchState(false), sportsTouchState(true), test.state,
+				sportsTouchState(true), sportsTouchState(true),
+				sportsTouchState(false), sportsTouchState(true),
+			} {
+				if detector.observe(state, now.Add(time.Duration(index)*time.Second)) {
+					t.Fatal("missing sensor data allowed an interrupted or existing touch to mute")
+				}
+			}
+			if !detector.observe(sportsTouchState(true), now.Add(7*time.Second)) {
+				t.Fatal("fresh one-second touch after missing sensor data did not mute")
+			}
+		})
+	}
+}
+
+func TestSportsMuteIgnoresButtonPresses(t *testing.T) {
+	var detector sportsTouchHoldDetector
+	now := time.Now()
+	for index, pressed := range []bool{false, true, true, false} {
+		state := sportsTouchState(false)
+		if pressed {
+			state.Status = uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_BUTTON_PRESSED)
+		}
+		if detector.observe(state, now.Add(time.Duration(index)*time.Second)) {
+			t.Fatal("a button press without touching the sensor triggered a mute")
+		}
 	}
 }
 
@@ -171,9 +207,8 @@ func TestNBAMutedGamePollingSkipsUpdatesAndStillQueuesFinal(t *testing.T) {
 		NBA: vars.NBAConfig{Enable: true, FavoriteTeams: []string{"LAL"}, PregameMinutes: 15, LiveUpdateMinutes: 1, NotifyNotable: true, NotifyFinal: true},
 	}
 	game := testNBAGame("muted-game", "pre", time.Now().Add(5*time.Minute), "0", "0")
-	requests := 0
+	nonScoreboardRequests := 0
 	externalApiClient = &http.Client{Transport: bedtimeScoreboardTransport(func(request *http.Request) (*http.Response, error) {
-		requests++
 		data := []byte(`{}`)
 		if strings.HasSuffix(request.URL.Path, "/scoreboard") {
 			var err error
@@ -181,6 +216,8 @@ func TestNBAMutedGamePollingSkipsUpdatesAndStillQueuesFinal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+		} else {
+			nonScoreboardRequests++
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header)}, nil
 	})}
@@ -192,7 +229,8 @@ func TestNBAMutedGamePollingSkipsUpdatesAndStillQueuesFinal(t *testing.T) {
 			t.Fatal("muted pregame/live update was queued")
 		}
 	}
-	if requests != 2 {
+	// Overnight polling can fetch both yesterday's and today's scoreboards.
+	if nonScoreboardRequests != 0 {
 		t.Fatal("muted game unnecessarily fetched injuries, logos, or a summary")
 	}
 	game.Status.Type.State = "post"
@@ -348,7 +386,7 @@ func (client *sportsMuteRobotClient) ExternalAudioStreamPlayback(ctx context.Con
 	return client.chime, client.chimeError
 }
 
-func TestSportsSingleClickInterruptsSpeechAndReleasesControlWithoutRetry(t *testing.T) {
+func TestSportsTouchHoldInterruptsSpeechAndReleasesControlWithoutRetry(t *testing.T) {
 	for _, test := range []struct{ source, taskSource string }{{"nba", "nba"}, {"f1", "f1"}, {"nba", "test"}} {
 		t.Run(test.source+"_"+test.taskSource, func(t *testing.T) {
 			source := test.source
@@ -368,15 +406,15 @@ func TestSportsSingleClickInterruptsSpeechAndReleasesControlWithoutRetry(t *test
 			case <-time.After(time.Second):
 				t.Fatal("announcement did not start")
 			}
-			for index, pressed := range []bool{false, true, false} {
-				if index > 0 {
-					time.Sleep(70 * time.Millisecond)
+			for index, touched := range []bool{false, true, true} {
+				if index == 2 {
+					time.Sleep(sportsTouchHoldDuration + 50*time.Millisecond)
 				}
-				event := &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: sportsButtonState(pressed)}}}
+				event := &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: sportsTouchState(touched)}}}
 				select {
 				case client.events <- event:
 				case <-time.After(time.Second):
-					t.Fatal("button event was not consumed")
+					t.Fatal("touch event was not consumed")
 				}
 			}
 			select {
@@ -385,7 +423,7 @@ func TestSportsSingleClickInterruptsSpeechAndReleasesControlWithoutRetry(t *test
 					t.Fatal("interrupted presentation retained the face for batching")
 				}
 			case <-time.After(3 * time.Second):
-				t.Fatal("single-click did not interrupt blocked speech")
+				t.Fatal("one-second touch did not interrupt blocked speech")
 			}
 			if len(client.controls) != 2 || len(taskQueue) != 0 || !sportsTaskIsMuted(task) {
 				t.Fatal("mute did not stop remaining pages, release live control, and suppress retries")
@@ -452,13 +490,13 @@ func TestSportsMuteListenerScopeAndCleanup(t *testing.T) {
 			if ctx.Err() != nil || sportsTaskIsMuted(task) {
 				t.Fatal("normal listener cleanup muted a game or canceled presentation")
 			}
-			// stop joins the listener. A complete click after delivery must remain
+			// stop joins the listener. Touch samples after delivery must remain
 			// unconsumed and cannot affect this event or the next notification.
-			for _, pressed := range []bool{false, true, false} {
-				client.events <- &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: sportsButtonState(pressed)}}}
+			for _, touched := range []bool{false, true, true} {
+				client.events <- &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: sportsTouchState(touched)}}}
 			}
 			if len(client.events) != 3 || sportsTaskIsMuted(task) {
-				t.Fatal("a click after notification delivery was consumed or muted the event")
+				t.Fatal("a touch after notification delivery was consumed or muted the event")
 			}
 			client.eventError = errors.New("robot unavailable")
 			if startSportsMuteListener(ctx, client, task, cancel)() {
@@ -470,7 +508,7 @@ func TestSportsMuteListenerScopeAndCleanup(t *testing.T) {
 			requests := client.eventRequests
 			cancel()
 			if startSportsMuteListener(ctx, client, task, cancel)() || client.eventRequests != requests {
-				t.Fatal("a canceled presentation subscribed to button events")
+				t.Fatal("a canceled presentation subscribed to touch events")
 			}
 		})
 	}
