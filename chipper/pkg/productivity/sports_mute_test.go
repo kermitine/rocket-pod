@@ -277,10 +277,11 @@ func (stream *sportsMuteEventStream) Recv() (*vectorpb.EventResponse, error) {
 
 type sportsMuteControlStream struct {
 	readinessControlStream
-	ctx      context.Context
-	released bool
-	failed   bool
-	calls    *[]string
+	ctx        context.Context
+	released   bool
+	releasedAt time.Time
+	failed     bool
+	calls      *[]string
 }
 
 func (stream *sportsMuteControlStream) Send(request *vectorpb.BehaviorControlRequest) error {
@@ -289,6 +290,7 @@ func (stream *sportsMuteControlStream) Send(request *vectorpb.BehaviorControlReq
 	}
 	if request.GetControlRelease() != nil {
 		stream.released, stream.failed = true, stream.ctx.Err() != nil
+		stream.releasedAt = time.Now()
 		*stream.calls = append(*stream.calls, "release")
 	}
 	return nil
@@ -296,16 +298,18 @@ func (stream *sportsMuteControlStream) Send(request *vectorpb.BehaviorControlReq
 
 type sportsMuteRobotClient struct {
 	batchRobotClient
-	events        chan *vectorpb.EventResponse
-	speaking      chan struct{}
-	control       *sportsMuteControlStream
-	controls      []*sportsMuteControlStream
-	calls         []string
-	chime         *fakeAcknowledgementStream
-	chimeError    error
-	muteVoice     bool
-	eventRequests int
-	eventError    error
+	events                   chan *vectorpb.EventResponse
+	speaking                 chan struct{}
+	control                  *sportsMuteControlStream
+	controls                 []*sportsMuteControlStream
+	calls                    []string
+	chime                    *fakeAcknowledgementStream
+	chimeError               error
+	muteVoice                bool
+	muteSpeechDurationScalar float32
+	onSpeech                 func(context.Context, *vectorpb.SayTextRequest) (*vectorpb.SayTextResponse, error)
+	eventRequests            int
+	eventError               error
 }
 
 func (client *sportsMuteRobotClient) BehaviorControl(ctx context.Context, _ ...grpc.CallOption) (vectorpb.ExternalInterface_BehaviorControlClient, error) {
@@ -324,11 +328,15 @@ func (client *sportsMuteRobotClient) SayText(ctx context.Context, request *vecto
 	client.calls = append(client.calls, "say:"+request.Text)
 	if request.Text == "Game muted." || request.Text == "Session muted." {
 		client.muteVoice = request.UseVectorVoice
+		client.muteSpeechDurationScalar = request.DurationScalar
 	}
 	if client.speaking != nil && len(client.speech) == 1 {
 		close(client.speaking)
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if client.onSpeech != nil {
+		return client.onSpeech(ctx, request)
 	}
 	return &vectorpb.SayTextResponse{State: vectorpb.SayTextResponse_FINISHED}, nil
 }
@@ -394,6 +402,9 @@ func TestSportsSingleClickInterruptsSpeechAndReleasesControlWithoutRetry(t *test
 			wantCalls := []string{"acquire", "say:Current score", "release", "chime", "acquire", "say:" + confirmation, "release"}
 			if !reflect.DeepEqual(client.calls, wantCalls) || !client.muteVoice {
 				t.Fatalf("mute feedback order=%v, want %v with Vector's voice", client.calls, wantCalls)
+			}
+			if client.muteSpeechDurationScalar != 1 {
+				t.Fatalf("mute speech duration scalar=%v, want normal-speed speech", client.muteSpeechDurationScalar)
 			}
 			var pcm []byte
 			for _, request := range client.chime.sent {
@@ -483,5 +494,47 @@ func TestSportsMuteConfirmationHonorsCancellation(t *testing.T) {
 	confirmSportsEventMuted(ctx, &vector.Vector{Conn: client}, Task{Source: "nba"})
 	if len(client.calls) != 0 {
 		t.Fatal("canceled confirmation attempted audio or behavior control")
+	}
+}
+
+func TestSportsMuteConfirmationHoldsControlWhileSpeechIsStillPlaying(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		response     *vectorpb.SayTextResponse
+	}{
+		{"NBA playing", "nba", &vectorpb.SayTextResponse{State: vectorpb.SayTextResponse_PLAYING}},
+		{"F1 generating", "f1", &vectorpb.SayTextResponse{State: vectorpb.SayTextResponse_GENERATING}},
+		{"missing completion state", "nba", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var speechReturnedAt time.Time
+			client := &sportsMuteRobotClient{onSpeech: func(context.Context, *vectorpb.SayTextRequest) (*vectorpb.SayTextResponse, error) {
+				speechReturnedAt = time.Now()
+				return test.response, nil
+			}}
+			task := sportsMuteTestTask(test.source, "game", "robot", "live")
+			confirmSportsEventMuted(context.Background(), &vector.Vector{Conn: client}, task)
+			if len(client.speech) != 1 || !client.control.released || client.control.failed {
+				t.Fatal("confirmation did not speak once and release control with a live context")
+			}
+			if elapsed, want := client.control.releasedAt.Sub(speechReturnedAt), estimatedReminderSpeechDuration(client.speech[0]); elapsed < want {
+				t.Fatalf("released control %v after speech started, before the %v playback allowance", elapsed, want)
+			}
+		})
+	}
+}
+
+func TestConfirmationSpeechPlaybackWaitHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &sportsMuteRobotClient{onSpeech: func(context.Context, *vectorpb.SayTextRequest) (*vectorpb.SayTextResponse, error) {
+		cancel()
+		return &vectorpb.SayTextResponse{State: vectorpb.SayTextResponse_PLAYING}, nil
+	}}
+	if err := sayConfirmationResponse(ctx, &vector.Vector{Conn: client}, "Game muted."); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled playback wait returned %v, want context.Canceled", err)
+	}
+	if len(client.speech) != 1 {
+		t.Fatal("canceled playback wait repeated the confirmation")
 	}
 }

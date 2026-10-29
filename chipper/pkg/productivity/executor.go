@@ -720,7 +720,19 @@ func sayConfirmationResponse(ctx context.Context, robot *vector.Vector, text str
 
 	var lastErr error
 	for attempt := 0; attempt < confirmationSpeechAttempts; attempt++ {
-		if _, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{Text: speechWithoutDiacritics(text), UseVectorVoice: true}); err == nil {
+		response, err := robot.Conn.SayText(ctx, &vectorpb.SayTextRequest{
+			Text:           speechWithoutDiacritics(text),
+			UseVectorVoice: true,
+			DurationScalar: 1.0,
+		})
+		if err == nil {
+			// Match announcement playback: an early or missing completion state
+			// needs time to finish before control release can stop its audio.
+			if response == nil || response.GetState() != vectorpb.SayTextResponse_FINISHED {
+				if !waitForReminderSpeechFallback(ctx, text) {
+					return ctx.Err()
+				}
+			}
 			return nil
 		} else {
 			lastErr = err
