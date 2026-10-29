@@ -182,7 +182,11 @@ func injectTestF1Leaderboard(robotESN string, sessionType, kind string) error {
 	if err != nil {
 		return err
 	}
-	if enqueueTask(Task{ID: fmt.Sprintf("f1_test_%s_%d", logName, time.Now().UnixNano()), RobotESN: robotESN, Pages: pages, Source: "f1", configurationGeneration: currentConfigurationGeneration()}) {
+	if enqueueTask(Task{
+		ID: fmt.Sprintf("f1_test_%s_%d", logName, time.Now().UnixNano()), RobotESN: robotESN, Pages: pages,
+		Source: "f1", configurationGeneration: currentConfigurationGeneration(),
+		sportsEventSource: "f1", sportsEventID: race.ID, sportsFinal: kind == "final",
+	}) {
 		logger.Println("Productivity: F1 " + logName + " test update queued")
 		return nil
 	}
@@ -266,7 +270,7 @@ func checkF1Races() {
 			if !notify {
 				kind, notify = f1NotificationForSession(session, config, now, notifyFinal)
 			}
-			if !notify {
+			if !notify || (kind != "final" && sportsEventIsMuted("f1", target, session.ID)) {
 				continue
 			}
 			if isBedtimeForRobot(target, now) {
@@ -290,6 +294,7 @@ func checkF1Races() {
 			if enqueueSportsNotification(Task{
 				ID: "f1_" + session.ID + "_" + kind, RobotESN: target, Pages: pages,
 				Source: "f1", configurationGeneration: generation,
+				sportsEventSource: "f1", sportsEventID: session.ID, sportsFinal: kind == "final",
 			}, session.ID) {
 				markF1Notified(session.ID, kind, now)
 				if strings.EqualFold(session.Type.Abbreviation, "Race") && (kind == "live" || kind == "leader") {

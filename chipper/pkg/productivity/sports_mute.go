@@ -11,54 +11,58 @@ import (
 )
 
 const (
-	nbaDoubleClickWindow       = 500 * time.Millisecond
-	nbaButtonDebounce          = 40 * time.Millisecond
-	nbaMuteConfirmationTimeout = 12 * time.Second
+	sportsButtonClickWindow       = 500 * time.Millisecond
+	sportsButtonDebounce          = 40 * time.Millisecond
+	sportsMuteConfirmationTimeout = 12 * time.Second
 )
 
-type nbaGameMuteKey struct {
-	robotESN, gameID string
+type sportsMuteKey struct {
+	source, robotESN, eventID string
 }
 
-// Protected by taskQueueMu. Game IDs keep mutes specific to a single matchup,
-// including when the game crosses midnight or settings are saved again.
-var mutedNBAGames = make(map[nbaGameMuteKey]bool)
+// Protected by taskQueueMu. Event IDs keep mutes specific to a single game or
+// F1 session, including across midnight and configuration changes.
+var mutedSportsEvents = make(map[sportsMuteKey]bool)
 
-func nbaMuteKey(robotESN, gameID string) nbaGameMuteKey {
-	return nbaGameMuteKey{strings.ToLower(robotESN), gameID}
+func sportsEventMuteKey(source, robotESN, eventID string) sportsMuteKey {
+	return sportsMuteKey{source, strings.ToLower(robotESN), eventID}
 }
 
-func nbaGameIsMuted(robotESN, gameID string) bool {
+func sportsEventIsMuted(source, robotESN, eventID string) bool {
 	taskQueueMu.Lock()
 	defer taskQueueMu.Unlock()
-	return mutedNBAGames[nbaMuteKey(robotESN, gameID)]
+	return mutedSportsEvents[sportsEventMuteKey(source, robotESN, eventID)]
 }
 
-func nbaTaskIsMuted(task Task) bool {
-	if task.nbaGameID == "" || task.nbaFinal {
+func sportsTaskSupportsMute(task Task) bool {
+	return (task.sportsEventSource == "nba" || task.sportsEventSource == "f1") && task.sportsEventID != "" && !task.sportsFinal
+}
+
+func sportsTaskIsMuted(task Task) bool {
+	if !sportsTaskSupportsMute(task) {
 		return false
 	}
 	taskQueueMu.Lock()
 	defer taskQueueMu.Unlock()
-	return nbaTaskIsMutedLocked(task)
+	return sportsTaskIsMutedLocked(task)
 }
 
-func nbaTaskIsMutedLocked(task Task) bool {
-	return task.nbaGameID != "" && !task.nbaFinal && mutedNBAGames[nbaMuteKey(task.RobotESN, task.nbaGameID)]
+func sportsTaskIsMutedLocked(task Task) bool {
+	return sportsTaskSupportsMute(task) && mutedSportsEvents[sportsEventMuteKey(task.sportsEventSource, task.RobotESN, task.sportsEventID)]
 }
 
-func muteNBAGame(task Task) {
-	if task.nbaGameID == "" || task.nbaFinal {
+func muteSportsEvent(task Task) {
+	if !sportsTaskSupportsMute(task) {
 		return
 	}
 	taskQueueMu.Lock()
 	defer taskQueueMu.Unlock()
-	key := nbaMuteKey(task.RobotESN, task.nbaGameID)
-	mutedNBAGames[key] = true
+	key := sportsEventMuteKey(task.sportsEventSource, task.RobotESN, task.sportsEventID)
+	mutedSportsEvents[key] = true
 	// Wake deferred retries immediately, but preserve a final result that may
 	// have arrived while the older live update was still being spoken.
 	for pendingKey, notification := range pendingSportsNotifications {
-		if pendingKey.source == "nba" && pendingKey.eventID == key.gameID && pendingKey.robotESN == key.robotESN && !notification.nbaFinal {
+		if pendingKey.source == key.source && pendingKey.eventID == key.eventID && pendingKey.robotESN == key.robotESN && !notification.final {
 			close(notification.superseded)
 			delete(pendingSportsNotifications, pendingKey)
 		}
@@ -68,7 +72,7 @@ drain:
 	for {
 		select {
 		case queued := <-taskQueue:
-			if !taskIsSuperseded(queued) && !nbaTaskIsMutedLocked(queued) {
+			if !taskIsSuperseded(queued) && !sportsTaskIsMutedLocked(queued) {
 				pending = append(pending, queued)
 			}
 		default:
@@ -80,14 +84,13 @@ drain:
 	}
 }
 
-type nbaDoubleClickDetector struct {
+type sportsButtonClickDetector struct {
 	initialized bool
 	pressed     bool
 	pressedAt   time.Time
-	firstClick  time.Time
 }
 
-func (detector *nbaDoubleClickDetector) observe(state *vectorpb.RobotState, now time.Time) bool {
+func (detector *sportsButtonClickDetector) observe(state *vectorpb.RobotState, now time.Time) bool {
 	if state == nil {
 		return false
 	}
@@ -104,26 +107,17 @@ func (detector *nbaDoubleClickDetector) observe(state *vectorpb.RobotState, now 
 		detector.pressedAt = now
 		return false
 	}
-	// Count completed clicks only. A held button, repeated sensor samples,
-	// switch bounce, or a button already held at startup is not a double-click.
+	// Count one completed click. Ignore holds, switch bounce, repeated samples,
+	// and a button already held when notification delivery begins.
 	duration := now.Sub(detector.pressedAt)
-	if detector.pressedAt.IsZero() || duration < nbaButtonDebounce || duration > nbaDoubleClickWindow {
-		detector.firstClick = time.Time{}
-		return false
-	}
-	if !detector.firstClick.IsZero() && now.Sub(detector.firstClick) <= nbaDoubleClickWindow {
-		detector.firstClick = time.Time{}
-		return true
-	}
-	detector.firstClick = now
-	return false
+	return !detector.pressedAt.IsZero() && duration >= sportsButtonDebounce && duration <= sportsButtonClickWindow
 }
 
 // Listen only during presentation, so clicks while idle, driving, or delivering
 // unrelated reminders cannot mute a game. Join cleanup before the next task so
 // its speech can never be silenced by a late audio-stop request.
-func startNBAMuteListener(ctx context.Context, robot vectorpb.ExternalInterfaceClient, task Task, stopPresentation context.CancelFunc) func() bool {
-	if task.nbaGameID == "" || task.nbaFinal {
+func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfaceClient, task Task, stopPresentation context.CancelFunc) func() bool {
+	if !sportsTaskSupportsMute(task) || ctx.Err() != nil {
 		return func() bool { return false }
 	}
 	streamCtx, stopStream := context.WithCancel(ctx)
@@ -132,36 +126,36 @@ func startNBAMuteListener(ctx context.Context, robot vectorpb.ExternalInterfaceC
 	})
 	if err != nil {
 		stopStream()
-		logger.Println("Productivity: NBA mute button listener unavailable: " + err.Error())
+		logger.Println("Productivity: Sports mute button listener unavailable: " + err.Error())
 		return func() bool { return false }
 	}
 	done := make(chan struct{})
 	muted := false // Read only after done closes.
 	go func() {
 		defer close(done)
-		var detector nbaDoubleClickDetector
+		var detector sportsButtonClickDetector
 		for {
 			response, err := stream.Recv()
 			if streamCtx.Err() != nil {
 				return
 			}
 			if err != nil {
-				logger.Println("Productivity: NBA mute button listener stopped: " + err.Error())
+				logger.Println("Productivity: Sports mute button listener stopped: " + err.Error())
 				return
 			}
 			if !detector.observe(response.GetEvent().GetRobotState(), time.Now()) {
 				continue
 			}
-			muteNBAGame(task)
+			muteSportsEvent(task)
 			muted = true
 			stopPresentation()
-			logger.Println("Productivity: Muted NBA game " + task.nbaGameID + " until the final score for " + task.RobotESN)
+			logger.Println("Productivity: Muted " + task.sportsEventSource + " event " + task.sportsEventID + " until the final result for " + task.RobotESN)
 			if ip := robotIPForESN(task.RobotESN); ip != "" {
 				stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				err := stopReminderAnimationAudio(stopCtx, ip)
 				cancel()
 				if err != nil {
-					logger.Println("Productivity: Could not stop NBA audio before releasing control: " + err.Error())
+					logger.Println("Productivity: Could not stop sports audio before releasing control: " + err.Error())
 				}
 			}
 			return
@@ -176,8 +170,8 @@ func startNBAMuteListener(ctx context.Context, robot vectorpb.ExternalInterfaceC
 
 // The interrupted presentation must finish and release control before this
 // runs, so its audio cleanup cannot silence the chime or confirmation speech.
-func confirmNBAGameMuted(parent context.Context, robot *vector.Vector) {
-	ctx, cancel := context.WithTimeout(parent, nbaMuteConfirmationTimeout)
+func confirmSportsEventMuted(parent context.Context, robot *vector.Vector, task Task) {
+	ctx, cancel := context.WithTimeout(parent, sportsMuteConfirmationTimeout)
 	defer cancel()
 	if ctx.Err() != nil {
 		return
@@ -186,7 +180,7 @@ func confirmNBAGameMuted(parent context.Context, robot *vector.Vector) {
 	err := playVoiceCommandAcknowledgement(chimeCtx, robot.Conn)
 	stopChime()
 	if err != nil {
-		logger.Println("Productivity: NBA mute confirmation chime failed: " + err.Error())
+		logger.Println("Productivity: Sports mute confirmation chime failed: " + err.Error())
 	}
 	if ctx.Err() != nil {
 		return
@@ -195,19 +189,23 @@ func confirmNBAGameMuted(parent context.Context, robot *vector.Vector) {
 	// canceled to interrupt SayText, while this speech needs a live context.
 	control, err := robot.Conn.BehaviorControl(ctx)
 	if err != nil {
-		logger.Println("Productivity: NBA mute confirmation control unavailable: " + err.Error())
+		logger.Println("Productivity: Sports mute confirmation control unavailable: " + err.Error())
 		return
 	}
 	if err := acquireBehaviorControl(control); err != nil {
-		logger.Println("Productivity: NBA mute confirmation control failed: " + err.Error())
+		logger.Println("Productivity: Sports mute confirmation control failed: " + err.Error())
 		return
 	}
 	defer func() {
 		if err := releaseBehaviorControl(control); err != nil {
-			logger.Println("Productivity: Failed to release NBA mute confirmation control: " + err.Error())
+			logger.Println("Productivity: Failed to release sports mute confirmation control: " + err.Error())
 		}
 	}()
-	if err := sayConfirmationResponse(ctx, robot, "Game muted."); err != nil {
-		logger.Println("Productivity: NBA mute confirmation speech failed: " + err.Error())
+	message := "Game muted."
+	if task.sportsEventSource == "f1" {
+		message = "Session muted."
+	}
+	if err := sayConfirmationResponse(ctx, robot, message); err != nil {
+		logger.Println("Productivity: Sports mute confirmation speech failed: " + err.Error())
 	}
 }

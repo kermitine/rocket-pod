@@ -48,8 +48,9 @@ type Task struct {
 	ExpiresAt               time.Time
 	configurationGeneration uint64
 	sportsNotification      *pendingSportsNotification
-	nbaGameID               string
-	nbaFinal                bool
+	sportsEventSource       string // The sport, including for explicitly requested test tasks.
+	sportsEventID           string
+	sportsFinal             bool
 }
 
 type TaskPage struct {
@@ -318,7 +319,7 @@ func taskIsExpiredAt(task Task, now time.Time) bool {
 
 func taskCanRun(task Task) bool {
 	now := time.Now()
-	return taskIsCurrent(task) && !taskIsSuperseded(task) && !nbaTaskIsMuted(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
+	return taskIsCurrent(task) && !taskIsSuperseded(task) && !sportsTaskIsMuted(task) && !taskIsExpiredAt(task, now) && !taskSuppressedAtBedtime(task, now)
 }
 
 func getReminderState(id string) (bool, bool) {
@@ -341,7 +342,7 @@ func getReminderState(id string) (bool, bool) {
 func processTask(task Task, faceAlreadyFound bool) (faceFound bool) {
 	beginSportsTaskAttempt(task)
 	defer finishSportsTaskAttempt(task)
-	if taskIsSuperseded(task) || nbaTaskIsMuted(task) {
+	if taskIsSuperseded(task) || sportsTaskIsMuted(task) {
 		logger.Println("Productivity: Discarding canceled sports notification " + task.ID)
 		return
 	}
@@ -461,19 +462,19 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 	taskCtx := ctx
 	presentationCtx, stopPresentation := context.WithCancel(taskCtx)
 	defer stopPresentation()
-	stopMuteListener := startNBAMuteListener(presentationCtx, robot.Conn, task, stopPresentation)
+	stopMuteListener := startSportsMuteListener(presentationCtx, robot.Conn, task, stopPresentation)
 	defer func() {
 		if !stopMuteListener() {
 			return
 		}
 		if controlHeld {
 			if err := releaseBehaviorControl(bcClient); err != nil {
-				logger.Println("Productivity: Could not release interrupted NBA presentation: " + err.Error())
+				logger.Println("Productivity: Could not release interrupted sports presentation: " + err.Error())
 				return
 			}
 			controlHeld = false
 		}
-		confirmNBAGameMuted(taskCtx, robot)
+		confirmSportsEventMuted(taskCtx, robot, task)
 	}()
 	ctx = presentationCtx
 
