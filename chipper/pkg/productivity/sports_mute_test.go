@@ -85,6 +85,62 @@ func TestSportsMuteRequiresOneSecondContinuousTouchDuringDelivery(t *testing.T) 
 	}
 }
 
+func TestSportsMuteRawTouchHoldWhenReportedTouchIsFalse(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		raw     []uint32
+		times   []int
+		mutesAt []int
+	}{
+		{"one second raw touch", []uint32{1000, 1100, 1100, 1100}, []int{0, 100, 1099, 1100}, []int{1100}},
+		{"sensor noise below threshold", []uint32{1000, 1049, 1050, 1000}, []int{0, 100, 1100, 1200}, nil},
+		{"held touch with noisy readings", []uint32{1000, 1100, 1040, 1045}, []int{0, 100, 500, 1100}, []int{1100}},
+		{"short raw tap", []uint32{1000, 1100, 1000, 1000}, []int{0, 100, 1099, 1100}, nil},
+		{"interrupted raw touches", []uint32{1000, 1100, 1100, 1000, 1100, 1100, 1000}, []int{0, 100, 700, 800, 900, 1500, 1600}, nil},
+		{"initially held raw sensor", []uint32{1100, 1100, 1100}, []int{0, 1000, 2000}, nil},
+		{"release and fresh raw touch", []uint32{1100, 1100, 1000, 1100, 1100}, []int{0, 1000, 1100, 1200, 2200}, []int{2200}},
+		{"zero reading is not a baseline", []uint32{0, 1000, 1000, 1000}, []int{0, 100, 1100, 1200}, nil},
+		{"long raw hold triggers once", []uint32{1000, 1100, 1100, 1100, 1100}, []int{0, 100, 1100, 1200, 3000}, []int{1100}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var detector sportsTouchHoldDetector
+			now := time.Now()
+			var got []int
+			for index, raw := range test.raw {
+				state := sportsTouchState(false)
+				state.TouchData.RawTouchValue = raw
+				if detector.observe(state, now.Add(time.Duration(test.times[index])*time.Millisecond)) {
+					got = append(got, test.times[index])
+				}
+			}
+			if !reflect.DeepEqual(got, test.mutesAt) {
+				t.Fatalf("muted at %v ms, want %v ms with reported touch always false", got, test.mutesAt)
+			}
+		})
+	}
+}
+
+func TestSportsMuteRawTouchSurvivesReportedTouchFlicker(t *testing.T) {
+	var detector sportsTouchHoldDetector
+	now := time.Now()
+	for index, sample := range []struct {
+		raw     uint32
+		touched bool
+		at      time.Duration
+	}{
+		{1000, false, 0},
+		{1100, true, 100 * time.Millisecond},
+		{1040, false, 500 * time.Millisecond},
+		{1045, false, 1100 * time.Millisecond},
+	} {
+		state := sportsTouchState(sample.touched)
+		state.TouchData.RawTouchValue = sample.raw
+		if muted, want := detector.observe(state, now.Add(sample.at)), index == 3; muted != want {
+			t.Fatalf("sample %d: muted=%t, want %t despite the interpreted touch flag dropping", index, muted, want)
+		}
+	}
+}
+
 func TestSportsMuteMissingTouchDataResetsHold(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -387,7 +443,10 @@ func (client *sportsMuteRobotClient) ExternalAudioStreamPlayback(ctx context.Con
 }
 
 func TestSportsTouchHoldInterruptsSpeechAndReleasesControlWithoutRetry(t *testing.T) {
-	for _, test := range []struct{ source, taskSource string }{{"nba", "nba"}, {"f1", "f1"}, {"nba", "test"}} {
+	for _, test := range []struct {
+		source, taskSource string
+		rawTouch           bool
+	}{{"nba", "nba", true}, {"f1", "f1", true}, {"nba", "test", false}} {
 		t.Run(test.source+"_"+test.taskSource, func(t *testing.T) {
 			source := test.source
 			setupSportsMuteTest(t, 1)
@@ -410,7 +469,17 @@ func TestSportsTouchHoldInterruptsSpeechAndReleasesControlWithoutRetry(t *testin
 				if index == 2 {
 					time.Sleep(sportsTouchHoldDuration + 50*time.Millisecond)
 				}
-				event := &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: sportsTouchState(touched)}}}
+				state := sportsTouchState(touched)
+				if test.rawTouch {
+					// Real raw sensor contact must interrupt speech even when the
+					// firmware's interpreted touch flag stays false throughout.
+					state.TouchData.IsBeingTouched = false
+					state.TouchData.RawTouchValue = 1000
+					if touched {
+						state.TouchData.RawTouchValue = 1100
+					}
+				}
+				event := &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: state}}}
 				select {
 				case client.events <- event:
 				case <-time.After(time.Second):
