@@ -5,6 +5,7 @@ import (
 
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	"github.com/kercre123/wire-pod/chipper/pkg/wirepod/localization"
+	vosk "github.com/kercre123/wire-pod/chipper/pkg/wirepod/stt/vosk/native"
 )
 
 var NumbersEN_US []string = []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "seconds", "minutes", "hours", "minute", "second", "hour"}
@@ -20,7 +21,7 @@ func removeDuplicates(strings []string) []string {
 	}
 	return result
 }
-func GetGrammerList(lang string) string {
+func GetGrammerList(lang string, model *vosk.VoskModel) string {
 	var wordsList []string
 	var grammer string
 	// add words in intent json

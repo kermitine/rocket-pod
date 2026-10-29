@@ -7,7 +7,7 @@ let reminderCounter = 0;
 let productivityImageLibrary = [];
 
 // VERSION REMINDER: Increment this for every repository change (V1, V2, ...).
-const ROCKET_POD_VERSION = "V90";
+const ROCKET_POD_VERSION = "V91";
 
 const nbaTeams = [
   ["ATL", "Atlanta Hawks"], ["BOS", "Boston Celtics"], ["BKN", "Brooklyn Nets"],
@@ -1236,46 +1236,6 @@ function updateKGAPI() {
     });
 }
 
-function setSTTLanguage() {
-  const data = { language: getE("languageSelection").value };
-
-  displayMessage("languageStatus", "Setting...");
-
-  fetch("/api/set_stt_info", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  })
-    .then((response) => response.text())
-    .then((response) => {
-      if (response.includes("downloading")) {
-        displayMessage("languageStatus", "Downloading model...");
-        updateSTTLanguageDownload();
-      } else {
-        displayMessage("languageStatus", response);
-        getE("languageSelectionDiv").style.display = response.includes("success") ? "block" : "none";
-      }
-    });
-}
-
-function updateSTTLanguageDownload() {
-
-  const interval = setInterval(() => {
-    fetch("/api/get_download_status")
-      .then((response) => response.text())
-      .then((response) => {
-        displayMessage("languageStatus", response.includes("not downloading") ? "Initiating download..." : response)
-        if (response.includes("success") || response.includes("error")) {
-          displayMessage("languageStatus", response);
-          getE("languageSelectionDiv").style.display = "block";
-          clearInterval(interval);
-        }
-      });
-  }, 500);
-}
-
 function sendRestart() {
   fetch("/api/reset")
     .then((response) => response.text())
@@ -1420,17 +1380,7 @@ function checkUpdate() {
 
 function showLanguage() {
   toggleVisibility(["section-weather", "section-restart", "section-kg", "section-productivity", "section-sports", "section-language"], "section-language", "icon-Language");
-  fetch("/api/get_stt_info")
-    .then((response) => response.json())
-    .then((parsed) => {
-      if (parsed.provider !== "vosk" && parsed.provider !== "whisper.cpp") {
-        displayError("languageStatus", `To set the STT language, the provider must be Vosk or Whisper. The current one is '${parsed.sttProvider}'.`);
-        getE("languageSelectionDiv").style.display = "none";
-      } else {
-        getE("languageSelectionDiv").style.display = "block";
-        getE("languageSelection").value = parsed.language;
-      }
-    });
+  loadSpeechSettings();
 }
 
 function showVersion() {

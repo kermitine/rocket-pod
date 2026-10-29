@@ -71,3 +71,54 @@ func TestWriteConfigToDiskWithErrorReportsFailure(t *testing.T) {
 		t.Fatal("WriteConfigToDiskWithError() error = nil, want write error")
 	}
 }
+
+func TestSpeechSelectionSurvivesRestartAndRepeatedSaves(t *testing.T) {
+	previous, path := APIConfig, ApiConfigPath
+	t.Cleanup(func() { APIConfig, ApiConfigPath = previous, path })
+	t.Setenv("STT_SERVICE", "vosk")
+	ApiConfigPath = filepath.Join(t.TempDir(), "config.json")
+	APIConfig.STT = STTConfig{Service: "whisper.cpp", Language: "en-US", VoskModel: "vosk-model-en-us-0.22-lgraph", WhisperModel: "base.en"}
+	want := APIConfig.STT
+	for i := 0; i < 2; i++ {
+		if err := WriteConfigToDiskWithError(); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+	APIConfig.STT = STTConfig{}
+	ReadConfig()
+	if APIConfig.STT != want {
+		t.Fatalf("shell defaults replaced saved speech selection: got %+v, want %+v", APIConfig.STT, want)
+	}
+}
+
+func TestAtomicConfigSavePreservesSymlink(t *testing.T) {
+	previous, path := APIConfig, ApiConfigPath
+	t.Cleanup(func() { APIConfig, ApiConfigPath = previous, path })
+	root := t.TempDir()
+	target := filepath.Join(root, "persisted.json")
+	if err := os.WriteFile(target, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ApiConfigPath = filepath.Join(root, "apiConfig.json")
+	if err := os.Symlink(target, ApiConfigPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	APIConfig.STT = STTConfig{Service: "whisper.cpp", Language: "en-US", WhisperModel: "base.en"}
+	if err := WriteConfigToDiskWithError(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(ApiConfigPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("config save replaced the persistent-volume symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved apiConfig
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.STT != APIConfig.STT {
+		t.Fatal("persistent config target was not updated")
+	}
+}

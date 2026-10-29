@@ -130,6 +130,22 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     echo "${BUILD_COMMIT}" >/build/.wirepod-version
 
 
+FROM ubuntu:22.04 AS whisper-builder
+
+# Build on the target platform so the same image supports amd64, arm64 and armv7.
+# Keep inference outside the Go binary so Vosk and Whisper can switch at runtime.
+ARG WHISPER_VERSION=1.7.6
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates cmake curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /src/whisper \
+    && curl -fsSL "https://codeload.github.com/ggml-org/whisper.cpp/tar.gz/refs/tags/v${WHISPER_VERSION}" \
+       | tar -xz --strip-components=1 -C /src/whisper \
+    && cmake -S /src/whisper -B /build -DCMAKE_BUILD_TYPE=Release \
+       -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+       -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=ON \
+    && cmake --build /build --target whisper-server -j 2
+
 FROM ubuntu:22.04 AS runtime
 
 ARG COMMIT_SHA=unknown
@@ -153,6 +169,7 @@ RUN apt-get update \
         libopusfile0 \ 
         libsodium23 \ 
         libsox3 \ 
+        libstdc++6 \
         tzdata \ 
         unzip \ 
         wget \ 
@@ -161,6 +178,7 @@ RUN apt-get update \
 WORKDIR /opt/rocket-pod
 
 COPY --from=builder /opt/vosk/libvosk /opt/vosk/libvosk
+COPY --from=whisper-builder /build/bin/whisper-server /usr/local/bin/whisper-server
 COPY --from=builder /src /opt/rocket-pod
 COPY --from=builder /build/chipper /opt/rocket-pod/chipper/chipper
 COPY --from=builder /build/.wirepod-version /opt/rocket-pod/.wirepod-version

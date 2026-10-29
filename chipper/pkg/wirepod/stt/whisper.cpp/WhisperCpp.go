@@ -2,22 +2,25 @@ package wirepod_whispercpp
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	whisper "github.com/kercre123/whisper.cpp/bindings/go"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	sr "github.com/kercre123/wire-pod/chipper/pkg/wirepod/speechrequest"
+	"github.com/kercre123/wire-pod/chipper/pkg/wirepod/stt/models"
 )
 
 var Name string = "whisper.cpp"
 
 var context *whisper.Context
 var params whisper.Params
+var recognitionMu sync.Mutex
 
 func padPCM(data []byte) []byte {
 	const sampleRate = 16000
@@ -40,12 +43,15 @@ func padPCM(data []byte) []byte {
 }
 
 func Init() error {
-	whispModel := os.Getenv("WHISPER_MODEL")
-	if whispModel == "" {
-		logger.Println("WHISPER_MODEL not defined, assuming tiny")
-		whispModel = "tiny"
-	} else {
-		whispModel = strings.TrimSpace(whispModel)
+	if !vars.APIConfig.PastInitialSetup {
+		return nil
+	}
+	selected, err := models.Resolve(models.Current(vars.APIConfig.STT))
+	if err != nil {
+		return err
+	}
+	if err := models.Ensure(selected, nil); err != nil {
+		return err
 	}
 	var sttLanguage string
 	if len(vars.APIConfig.STT.Language) == 0 {
@@ -53,15 +59,25 @@ func Init() error {
 	} else {
 		sttLanguage = strings.Split(vars.APIConfig.STT.Language, "-")[0]
 	}
+	if sttLanguage == "nt" {
+		sttLanguage = "nl"
+	}
 
-	modelPath := filepath.Join(vars.WhisperModelPath, "ggml-"+whispModel+".bin")
+	modelPath := models.Path(selected)
 	if _, err := os.Stat(modelPath); err != nil {
 		logger.Println("Model does not exist: " + modelPath)
 		return err
 	}
 	logger.Println("Opening Whisper model (" + modelPath + ")")
 	//logger.Println(whisper.Whisper_print_system_info())
-	context = whisper.Whisper_init(modelPath)
+	next := whisper.Whisper_init(modelPath)
+	if next == nil {
+		return fmt.Errorf("Whisper could not load %s; check model files and available RAM", modelPath)
+	}
+	if context != nil {
+		context.Whisper_free()
+	}
+	context = next
 	params = context.Whisper_full_default_params(whisper.SamplingStrategy(whisper.SAMPLING_GREEDY))
 	params.SetTranslate(false)
 	params.SetPrintSpecial(false)
@@ -76,6 +92,8 @@ func Init() error {
 }
 
 func STT(req sr.SpeechRequest) (string, error) {
+	recognitionMu.Lock()
+	defer recognitionMu.Unlock()
 	logger.Println("(Bot " + req.Device + ", Whisper) Processing...")
 	speechIsDone := false
 	var err error

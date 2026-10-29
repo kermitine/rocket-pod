@@ -45,7 +45,7 @@
         </div>
         <div class="main-nav-child">
           <a href="#" onclick="showLanguage(); return false;"><i class="fa-solid fa-language" id="icon-Language"
-              name="icon"></i><br />Set Language</a>
+              name="icon"></i><br />Speech Recognition</a>
         </div>
         <!--<div class="main-nav-child"><a href="#" onclick="showRestart(); return false;"><i class="fa solid fa-arrow-rotate-right" id="icon-Restart" name="icon"></i><br/>Restart Rocket Pod</a></div> -->
       </div>
@@ -488,14 +488,21 @@
       </div>
 
       <div id="section-language" style="display: none">
-        <h2>STT Language</h2>
+        <h2>Speech Recognition</h2>
         <hr class="small-hr">
-        <p>Set the speech-to-text language you'd like Rocket Pod to use.</p>
+        <p>Choose an offline engine and model. Missing models download automatically when you apply.
+          Installed models stay available for switching back, and your selection survives restarts.</p>
+        <p id="speechCurrent" aria-live="polite"></p>
         <hr class="small-hr">
-        <div id="languageStatus"></div>
+        <div id="languageStatus" role="status" aria-live="polite"></div>
         <div id="languageSelectionDiv">
           <div>
-            <select name="languageSelection" id="languageSelection">
+            <label for="speechProvider">Recognition engine</label><br />
+            <select id="speechProvider" onchange="updateSpeechModels()"></select>
+            <p id="speechProviderDescription"></p>
+            <p id="speechUnavailable"></p>
+            <label for="languageSelection">Spoken language</label><br />
+            <select name="languageSelection" id="languageSelection" onchange="updateSpeechModels()">
               <option value="en-US">English (US)</option>
               <option value="it-IT">Italian (IT)</option>
               <option value="es-ES">Spanish (ES)</option>
@@ -509,14 +516,20 @@
               <option value="ru-RU">Russian (RU)</option>
               <option value="nt-NL">Dutch (NL)</option>
               <option value="uk-UA">Ukrainian (UA)</option>
-              <option value="vi-VN">VietNamese (VN)</option>
+              <option value="vi-VN">Vietnamese (VN)</option>
             </select>
+            <br /><br />
+            <label for="speechModel">Recognition model</label><br />
+            <select id="speechModel" onchange="updateSpeechModelDescription()"></select>
+            <p id="speechModelDescription"></p>
+            <p>For English, start with Vosk English balanced or Whisper base.en. Try Whisper small.en
+              if your host has enough CPU and RAM. Larger models can improve accuracy, but use more
+              memory and may respond more slowly. Download sizes are approximate; allow extra disk space for installation.</p>
           </div>
           <div>
             <hr class="small-hr">
-            <button onclick="setSTTLanguage()">
-              Set Language
-            </button>
+            <button id="speechApply" onclick="applySpeechModel()">Download &amp; use model</button>
+            <button id="speechRefresh" onclick="loadSpeechSettings()">Refresh</button>
           </div>
         </div>
         <hr />
@@ -526,6 +539,7 @@
 </body>
 <script src="./js/ui.js"></script>
 <script src="./js/main.js"></script>
+<script src="./js/speech.js"></script>
 <script src="./sdkapp/js/main.js"></script>
 <script>
   updateRocketPodVersion();

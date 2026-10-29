@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 )
@@ -39,17 +40,22 @@ type apiConfig struct {
 		Temperature            float32 `json:"temp"`
 	} `json:"knowledge"`
 	Productivity ProductivityConfig `json:"productivity"`
-	STT          struct {
-		Service  string `json:"provider"`
-		Language string `json:"language"`
-	} `json:"STT"`
-	Server struct {
+	STT          STTConfig          `json:"STT"`
+	Server       struct {
 		// false for ip, true for escape pod
 		EPConfig bool   `json:"epconfig"`
 		Port     string `json:"port"`
 	} `json:"server"`
 	HasReadFromEnv   bool `json:"hasreadfromenv"`
 	PastInitialSetup bool `json:"pastinitialsetup"`
+}
+
+// Keep each engine's model selection when switching between engines.
+type STTConfig struct {
+	Service      string `json:"provider"`
+	Language     string `json:"language"`
+	VoskModel    string `json:"vosk_model,omitempty"`
+	WhisperModel string `json:"whisper_model,omitempty"`
 }
 
 func WriteConfigToDisk() {
@@ -64,7 +70,37 @@ func WriteConfigToDiskWithError() error {
 	if err != nil {
 		return fmt.Errorf("marshal API configuration: %w", err)
 	}
-	if err := os.WriteFile(ApiConfigPath, writeBytes, 0644); err != nil {
+	// Docker persists this file through a symlink. Replace its target atomically
+	// so a failed write cannot truncate the previous, working configuration.
+	path := ApiConfigPath
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("resolve API configuration symlink: %w", err)
+			}
+			path = resolved
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect API configuration: %w", err)
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".apiConfig-*.json")
+	if err != nil {
+		return fmt.Errorf("create API configuration: %w", err)
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(writeBytes); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Chmod(0644); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(file.Name(), path); err != nil {
 		return fmt.Errorf("write API configuration: %w", err)
 	}
 	return nil
@@ -127,8 +163,11 @@ func ReadConfig() {
 			logger.Println(err)
 			return
 		}
-		// stt service is the only thing controlled by shell
-		if APIConfig.STT.Service != os.Getenv("STT_SERVICE") {
+		// Vosk builds can also run local Whisper. Preserve UI selections at startup.
+		shellService := os.Getenv("STT_SERVICE")
+		localSelection := (shellService == "vosk" || shellService == "whisper.cpp") &&
+			(APIConfig.STT.Service == "vosk" || APIConfig.STT.Service == "whisper.cpp")
+		if APIConfig.STT.Service != shellService && !localSelection {
 			WriteSTT()
 		}
 		if !APIConfig.HasReadFromEnv {

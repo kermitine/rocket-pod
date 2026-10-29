@@ -226,6 +226,12 @@ func downloadModelArchive(url, destination string) error {
 	return nil
 }
 
+// ExtractModelArchive unpacks a trusted model/source ZIP with path traversal and
+// symlink protection. Callers must use a fresh staging directory.
+func ExtractModelArchive(archive, destination string) error {
+	return extractModelArchive(archive, destination)
+}
+
 func extractModelArchive(archive, destination string) error {
 	reader, err := zip.OpenReader(archive)
 	if err != nil {

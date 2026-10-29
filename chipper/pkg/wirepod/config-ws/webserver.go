@@ -23,8 +23,9 @@ import (
 	"github.com/kercre123/wire-pod/chipper/pkg/scripting"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	"github.com/kercre123/wire-pod/chipper/pkg/wirepod/localization"
-	processreqs "github.com/kercre123/wire-pod/chipper/pkg/wirepod/preqs"
 	botsetup "github.com/kercre123/wire-pod/chipper/pkg/wirepod/setup"
+	"github.com/kercre123/wire-pod/chipper/pkg/wirepod/stt/engine"
+	"github.com/kercre123/wire-pod/chipper/pkg/wirepod/stt/models"
 )
 
 var SttInitFunc func() error
@@ -63,6 +64,13 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		handleGetDownloadStatus(w)
 	case "get_stt_info":
 		handleGetSTTInfo(w)
+	case "get_speech_models":
+		handleGetSpeechModels(w)
+	case "set_speech_model":
+		handleSetSpeechModel(w, r)
+	case "get_speech_model_status":
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(engine.Status())
 	case "get_config":
 		handleGetConfig(w)
 	case "get_logs":
@@ -778,48 +786,82 @@ func handleGetKGAPI(w http.ResponseWriter) {
 }
 
 func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
 	var request struct {
 		Language string `json:"language"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if vars.APIConfig.STT.Service == "vosk" {
-		if !isValidLanguage(request.Language, localization.ValidVoskModels) {
-			http.Error(w, "language not valid", http.StatusBadRequest)
-			return
-		}
-		if !localization.VoskModelExists(request.Language) {
-			go localization.DownloadVoskModel(request.Language)
-			fmt.Fprint(w, "downloading language model...")
-			return
-		}
-	} else if vars.APIConfig.STT.Service == "whisper.cpp" {
-		if !isValidLanguage(request.Language, localization.ValidVoskModels) {
-			http.Error(w, "language not valid", http.StatusBadRequest)
-			return
-		}
-	} else {
+	selection := models.Current(engine.Config())
+	if selection.Provider != "vosk" && selection.Provider != "whisper.cpp" {
 		http.Error(w, "service must be vosk or whisper", http.StatusBadRequest)
 		return
 	}
-	vars.APIConfig.STT.Language = request.Language
-	vars.APIConfig.PastInitialSetup = true
-	vars.WriteConfigToDisk()
-	processreqs.ReloadVosk()
-	logger.Println("Reloaded voice processor successfully")
-	fmt.Fprint(w, "Language switched successfully.")
+	selection.Language, selection.Model = request.Language, ""
+	if err := engine.Start(selection); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fmt.Fprint(w, "downloading language model...")
 }
 
 func handleGetDownloadStatus(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain")
+	job := engine.Status()
+	if job.State != "idle" {
+		if job.State == "error" {
+			fmt.Fprint(w, "error: "+job.Message)
+		} else if job.State == "success" {
+			fmt.Fprint(w, "success")
+		} else {
+			fmt.Fprint(w, job.Message)
+		}
+		return
+	}
 	w.Write([]byte(localization.PollDownloadStatus()))
 }
 
 func handleGetSTTInfo(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(vars.APIConfig.STT)
+	json.NewEncoder(w).Encode(engine.Config())
+}
+
+func handleGetSpeechModels(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	config := engine.Config()
+	json.NewEncoder(w).Encode(struct {
+		Current   models.Selection  `json:"current"`
+		Config    vars.STTConfig    `json:"config"`
+		Providers []engine.Provider `json:"providers"`
+		Models    []models.Model    `json:"models"`
+		Job       engine.Job        `json:"job"`
+	}{models.Current(config), config, engine.Providers(), models.Catalog(), engine.Status()})
+}
+
+func handleSetSpeechModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var selection models.Selection
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&selection); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := engine.Start(selection); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(engine.Status())
 }
 
 func handleGetConfig(w http.ResponseWriter) {

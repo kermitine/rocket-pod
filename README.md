@@ -8,6 +8,39 @@ It allows voice commands to work with any Vector 1.0 or 2.0 for no fee, includin
 
 The installation guide exists on the wiki: [Installation guide](https://github.com/kercre123/wire-pod/wiki/Installation)
 
+## Speech recognition models
+
+Open **Server Settings → Speech Recognition** to choose Vosk or local Whisper,
+the spoken language, and a model. **Download & use model** installs missing files,
+shows progress, and switches after the current voice command finishes. Downloads
+run in the background; you can reopen the panel to check progress. Installed
+models are reused, each engine remembers its model, and the active selection
+survives restarts. Audio stays on the Rocket Pod host; no API key is needed.
+
+For English, try **Vosk English balanced** (128 MB) first. Compare it with
+**Whisper base.en** (142 MiB), then try **small.en** (466 MiB) on a capable host.
+These are starting points: compare the transcribed commands in Logs on your own
+robot. Bigger models use more memory and CPU, and do not guarantee better results
+for every voice or room. Keep Vector near you and reduce nearby TV/music noise.
+Changing these models affects speech after the wake word; it does not change
+Vector's built-in “Hey Vector” detection.
+
+New Docker builds include both recognition runtimes. Downloaded models and
+settings use the existing persistent data volume. Rebuild/recreate an older
+container once to get the Whisper runtime. With a source installation, the panel
+can build local Whisper automatically when CMake and a C++ compiler are installed
+(`sudo apt install cmake build-essential` on Debian/Ubuntu). The build uses the
+pinned whisper.cpp v1.7.6 release and may take several minutes. You can also set
+`WHISPER_SERVER` to an existing compatible `whisper-server` executable. Whisper
+runs on loopback and keeps its model loaded between commands. Builds that only
+include native Whisper cannot switch to Vosk; use the Vosk/Docker build for both.
+
+Model downloads come from the [Vosk model catalog](https://alphacephei.com/vosk/models)
+and the [whisper.cpp model repository](https://huggingface.co/ggerganov/whisper.cpp).
+Allow disk space for the download and unpacked Vosk files. Large Vosk models can
+need several GB of RAM. Download or activation failures report an error and keep
+the previous selection; incomplete downloads are retried on the next attempt.
+
 ## Repairing voice connections
 
 Open **Bot Setup → Voice connection** and click **Check voice connection**.

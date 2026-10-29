@@ -209,8 +209,8 @@ func TestLanguageDownloadDoesNotClaimSuccessAfterDownloadOrReloadFailure(t *test
 	}
 	vars.SttInitFunc = func() error { reloads++; return EnsureVoskModel("fr-FR") }
 	DownloadVoskModel("fr-FR")
-	if reloads != 2 || PollDownloadStatus() != "success" {
-		t.Fatal("valid download could not complete its reload")
+	if status := PollDownloadStatus(); reloads != 2 || status != "success" {
+		t.Fatalf("valid download could not complete its reload: reloads=%d, status=%s", reloads, status)
 	}
 	if PollDownloadStatus() != "not downloading" {
 		t.Fatal("terminal download status was not consumed")
