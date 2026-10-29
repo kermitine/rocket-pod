@@ -34,7 +34,7 @@ func TestReminderBatchReusesOnlySuccessfulFaceSearches(t *testing.T) {
 			}
 			close(queue)
 			var got []bool
-			processReminderBatch(<-queue, queue, func(task Task, reuse bool) bool {
+			processReminderBatch(<-queue, queue, func(task Task, reuse bool, _ *reminderBatchControl) bool {
 				index := len(got)
 				if task.ID != strconv.Itoa(index) {
 					t.Fatalf("task %s was played out of order", task.ID)
@@ -55,7 +55,7 @@ func TestReminderBatchResetsAfterEmptyQueueOrConfigurationChange(t *testing.T) {
 	queue <- first
 	queue <- Task{RobotESN: "robot", configurationGeneration: 2}
 	var got []bool
-	process := func(task Task, reuse bool) bool {
+	process := func(task Task, reuse bool, _ *reminderBatchControl) bool {
 		got = append(got, reuse)
 		return true
 	}
@@ -76,6 +76,7 @@ type batchRobotClient struct {
 	batteryCalls int
 	speech       []string
 	failSpeechAt int
+	headAngles   []float32
 }
 
 func (client *batchRobotClient) BatteryState(context.Context, *vectorpb.BatteryStateRequest, ...grpc.CallOption) (*vectorpb.BatteryStateResponse, error) {
@@ -118,7 +119,8 @@ func (client *batchRobotClient) EventStream(context.Context, *vectorpb.EventRequ
 	return &batchFaceStream{face: found}, nil
 }
 
-func (*batchRobotClient) SetHeadAngle(context.Context, *vectorpb.SetHeadAngleRequest, ...grpc.CallOption) (*vectorpb.SetHeadAngleResponse, error) {
+func (client *batchRobotClient) SetHeadAngle(_ context.Context, request *vectorpb.SetHeadAngleRequest, _ ...grpc.CallOption) (*vectorpb.SetHeadAngleResponse, error) {
+	client.headAngles = append(client.headAngles, request.AngleRad)
 	return &vectorpb.SetHeadAngleResponse{Result: &vectorpb.ActionResult{Code: vectorpb.ActionResult_ACTION_RESULT_SUCCESS}}, nil
 }
 
@@ -173,8 +175,8 @@ func TestReminderBatchDeliverySearchesUntilFaceFound(t *testing.T) {
 			queue := make(chan Task, 2)
 			queue <- makeTask("second")
 			queue <- makeTask("third")
-			processReminderBatch(makeTask("first"), queue, func(task Task, reuse bool) bool {
-				return deliverReminderTask(task, robot, reuse)
+			processReminderBatch(makeTask("first"), queue, func(task Task, reuse bool, control *reminderBatchControl) bool {
+				return deliverReminderTaskWithControl(task, robot, reuse, control)
 			})
 			if want := []string{"first", "second", "third"}; !reflect.DeepEqual(client.speech, want) {
 				t.Fatalf("spoken notifications = %v, want %v", client.speech, want)

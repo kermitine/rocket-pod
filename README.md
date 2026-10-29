@@ -45,6 +45,11 @@ already detected face, so the remaining queued notifications continue without
 another search or approach. Battery and bedtime checks still apply to each
 notification.
 
+Vector stays under Rocket Pod's control through mute confirmations and the
+remaining queued notifications, keeping his head at the reading angle. Normal
+behaviors resume once the batch finishes. Voice confirmations that require
+listening still release control while waiting for an answer.
+
 In **Productivity**, adjust **Face-search turn speed** from 0.5x to 8.0x and click
 **Apply Productivity Settings**. The default 1.0x keeps the original speed.
 

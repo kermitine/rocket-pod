@@ -192,7 +192,7 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 				err := stopReminderAnimationAudio(stopCtx, ip)
 				cancel()
 				if err != nil {
-					logger.Println("Productivity: Could not stop sports audio before releasing control: " + err.Error())
+					logger.Println("Productivity: Could not stop sports audio before mute confirmation: " + err.Error())
 				}
 			}
 			return
@@ -205,25 +205,14 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 	}
 }
 
-// The interrupted presentation must finish and release control before this
-// runs, so its audio cleanup cannot silence the chime or confirmation speech.
+// Standalone confirmations own their control session. Delivery uses the
+// existing batch session to avoid giving normal behaviors a chance to move.
 func confirmSportsEventMuted(parent context.Context, robot *vector.Vector, task Task) {
 	ctx, cancel := context.WithTimeout(parent, sportsMuteConfirmationTimeout)
 	defer cancel()
 	if ctx.Err() != nil {
 		return
 	}
-	chimeCtx, stopChime := context.WithTimeout(ctx, commandAcknowledgementTimeout)
-	err := playVoiceCommandAcknowledgement(chimeCtx, robot.Conn)
-	stopChime()
-	if err != nil {
-		logger.Println("Productivity: Sports mute confirmation chime failed: " + err.Error())
-	}
-	if ctx.Err() != nil {
-		return
-	}
-	// Use a fresh, bounded control session: the presentation context was
-	// canceled to interrupt SayText, while this speech needs a live context.
 	control, err := robot.Conn.BehaviorControl(ctx)
 	if err != nil {
 		logger.Println("Productivity: Sports mute confirmation control unavailable: " + err.Error())
@@ -238,6 +227,26 @@ func confirmSportsEventMuted(parent context.Context, robot *vector.Vector, task 
 			logger.Println("Productivity: Failed to release sports mute confirmation control: " + err.Error())
 		}
 	}()
+	confirmSportsEventMutedWithControl(ctx, robot, task)
+}
+
+// Join the interrupted presentation's audio cleanup before acknowledging the
+// mute. Behavior control remains held throughout the chime and speech.
+func confirmSportsEventMutedWithControl(parent context.Context, robot *vector.Vector, task Task) {
+	ctx, cancel := context.WithTimeout(parent, sportsMuteConfirmationTimeout)
+	defer cancel()
+	if ctx.Err() != nil {
+		return
+	}
+	chimeCtx, stopChime := context.WithTimeout(ctx, commandAcknowledgementTimeout)
+	err := playVoiceCommandAcknowledgement(chimeCtx, robot.Conn)
+	stopChime()
+	if err != nil {
+		logger.Println("Productivity: Sports mute confirmation chime failed: " + err.Error())
+	}
+	if ctx.Err() != nil {
+		return
+	}
 	message := "Game muted."
 	if task.sportsEventSource == "f1" {
 		message = "Session muted."

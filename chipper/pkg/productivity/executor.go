@@ -140,21 +140,29 @@ type confirmationListeningSession struct {
 func executorLoop() {
 	logger.Println("Productivity: executorLoop started")
 	for task := range taskQueue {
-		processReminderBatch(task, taskQueue, processTask)
+		processReminderBatch(task, taskQueue, processTaskWithControl)
 	}
 }
 
 // Reuse a successful face search only while draining pending work for the same
 // robot and configuration. An empty queue ends the batch, so later reminders
 // always start with a fresh search.
-func processReminderBatch(task Task, queue <-chan Task, process func(Task, bool) bool) {
+func processReminderBatch(task Task, queue <-chan Task, process func(Task, bool, *reminderBatchControl) bool) {
+	control := &reminderBatchControl{}
+	defer control.close()
 	faceFound := false
 	lastRobot := ""
 	var generation uint64
 	for {
 		logger.Println("Productivity: Processing task for " + task.RobotESN)
 		reuseFace := faceFound && strings.EqualFold(lastRobot, task.RobotESN) && generation == task.configurationGeneration
-		faceFound = process(task, reuseFace)
+		if !strings.EqualFold(lastRobot, task.RobotESN) || generation != task.configurationGeneration {
+			control.close()
+		}
+		faceFound = process(task, reuseFace, control)
+		if !faceFound {
+			control.close()
+		}
 		lastRobot, generation = task.RobotESN, task.configurationGeneration
 		select {
 		case next, ok := <-queue:
@@ -340,6 +348,12 @@ func getReminderState(id string) (bool, bool) {
 }
 
 func processTask(task Task, faceAlreadyFound bool) (faceFound bool) {
+	control := &reminderBatchControl{}
+	defer control.close()
+	return processTaskWithControl(task, faceAlreadyFound, control)
+}
+
+func processTaskWithControl(task Task, faceAlreadyFound bool, control *reminderBatchControl) (faceFound bool) {
 	beginSportsTaskAttempt(task)
 	defer finishSportsTaskAttempt(task)
 	if taskIsSuperseded(task) || sportsTaskIsMuted(task) {
@@ -377,16 +391,26 @@ func processTask(task Task, faceAlreadyFound bool) (faceFound bool) {
 		}
 	}
 
-	robot, err := vars.GetRobot(task.RobotESN)
-	if err != nil {
-		reminderConnections.observe(task.RobotESN, nil, err, time.Now())
-		deferTask(task, "robot is unavailable", reminderOfflineRetryDelay)
-		return
+	robot := control.robot
+	if !control.matches(task) {
+		var err error
+		robot, err = vars.GetRobot(task.RobotESN)
+		if err != nil {
+			reminderConnections.observe(task.RobotESN, nil, err, time.Now())
+			deferTask(task, "robot is unavailable", reminderOfflineRetryDelay)
+			return
+		}
 	}
-	return deliverReminderTask(task, robot, faceAlreadyFound)
+	return deliverReminderTaskWithControl(task, robot, faceAlreadyFound, control)
 }
 
 func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool) (faceFound bool) {
+	control := &reminderBatchControl{}
+	defer control.close()
+	return deliverReminderTaskWithControl(task, robot, faceAlreadyFound, control)
+}
+
+func deliverReminderTaskWithControl(task Task, robot *vector.Vector, faceAlreadyFound bool, control *reminderBatchControl) (faceFound bool) {
 	if !taskCanRun(task) {
 		return
 	}
@@ -401,26 +425,19 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), reminderTaskTimeout(task))
 	defer cancel()
+	taskCtx := ctx
 	go cancelTaskAtBedtime(ctx, cancel, task)
 
-	bcClient, err := robot.Conn.BehaviorControl(ctx)
+	stopWatching, err := control.acquire(ctx, robot, task)
 	if err != nil {
-		deferTask(task, "robot became unavailable", reminderOfflineRetryDelay)
-		return
-	}
-
-	if err := acquireBehaviorControl(bcClient); err != nil {
 		deferTask(task, "robot is not ready for behavior control: "+err.Error(), reminderOfflineRetryDelay)
 		return
 	}
-	controlHeld := true
-
+	defer stopWatching()
 	defer func() {
-		if controlHeld {
-			if err := releaseBehaviorControl(bcClient); err != nil {
-				logger.Println("Productivity: Failed to release behavior control: " + err.Error())
-				faceFound = false
-			}
+		if !faceFound || taskCtx.Err() != nil {
+			control.close()
+			faceFound = false
 		}
 	}()
 	// Acquiring control may take time. Use another battery reading immediately
@@ -457,9 +474,8 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 		return
 	}
 
-	// Keep behavior control on the task context so muting can cancel a blocked
-	// SayText call and still release control cleanly to stop the robot's actions.
-	taskCtx := ctx
+	// Cancel the presentation on mute while keeping batch control and the head's
+	// viewing angle through the acknowledgement and remaining notifications.
 	presentationCtx, stopPresentation := context.WithCancel(taskCtx)
 	defer stopPresentation()
 	stopMuteListener := startSportsMuteListener(presentationCtx, robot.Conn, task, stopPresentation)
@@ -467,14 +483,7 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 		if !stopMuteListener() {
 			return
 		}
-		if controlHeld {
-			if err := releaseBehaviorControl(bcClient); err != nil {
-				logger.Println("Productivity: Could not release interrupted sports presentation: " + err.Error())
-				return
-			}
-			controlHeld = false
-		}
-		confirmSportsEventMuted(taskCtx, robot, task)
+		confirmSportsEventMutedWithControl(taskCtx, robot, task)
 		// A deliberate mute ends only this presentation. Keep a successfully
 		// found face for the remaining batch unless the task itself was canceled.
 		if taskCtx.Err() == nil {
@@ -545,13 +554,11 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 			return
 		}
 		logger.Println("Productivity: Waiting for confirmation response...")
-		if err := releaseBehaviorControl(bcClient); err != nil {
-			controlHeld = false
+		if err := control.release(); err != nil {
 			logger.Println("Productivity: Failed to release behavior control for confirmation: " + err.Error())
 			snoozeTask(task)
 			return
 		}
-		controlHeld = false
 
 		result, err := waitForConfirmation(ctx, robot, task.RobotESN)
 		if err != nil {
@@ -566,14 +573,14 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 
 		// A release followed by another request is supported on the same stream,
 		// but no SDK action is safe until VIC explicitly grants control again.
-		if err := acquireBehaviorControl(bcClient); err != nil {
+		if err := acquireBehaviorControl(control.stream); err != nil {
 			logger.Println("Productivity: Failed to reacquire behavior control: " + err.Error())
 			if result != confirmationAccepted {
 				snoozeTask(task)
 			}
 			return
 		}
-		controlHeld = true
+		control.held = true
 
 		switch result {
 		case confirmationAccepted:
