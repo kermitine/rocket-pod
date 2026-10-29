@@ -47,101 +47,105 @@ func sportsTouchState(touched bool) *vectorpb.RobotState {
 	return &vectorpb.RobotState{TouchData: &vectorpb.TouchData{IsBeingTouched: touched}}
 }
 
-func TestSportsMuteRequiresOneSecondContinuousTouchDuringDelivery(t *testing.T) {
+func TestSportsMuteTriggersOnFreshTouchDuringDelivery(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		touched []bool
-		times   []int // Milliseconds since the first sample.
-		mutesAt []int
+		mutesAt []int // Sample indexes at which contact first starts.
 	}{
-		{"one second without release", []bool{false, true, true, true}, []int{0, 100, 1099, 1100}, []int{1100}},
-		{"short tap", []bool{false, true, false}, []int{0, 100, 200}, nil},
-		{"less than one second", []bool{false, true, true}, []int{0, 100, 1099}, nil},
-		{"release before threshold", []bool{false, true, false, false}, []int{0, 100, 1099, 1500}, nil},
-		{"release at threshold", []bool{false, true, false}, []int{0, 100, 1100}, nil},
-		{"interrupted touches do not add up", []bool{false, true, true, false, true, true, false}, []int{0, 100, 700, 800, 900, 1500, 1600}, nil},
-		{"touch held before delivery", []bool{true, true, true, false}, []int{0, 1000, 2000, 2100}, nil},
-		{"fresh touch after held at startup", []bool{true, true, false, true, true}, []int{0, 1000, 1100, 1200, 2200}, []int{2200}},
-		{"long hold triggers once", []bool{false, true, true, true, true, false}, []int{0, 100, 1100, 1200, 3000, 3100}, []int{1100}},
-		{"separate holds", []bool{false, true, true, false, true, true}, []int{0, 100, 1100, 1200, 1300, 2300}, []int{1100, 2300}},
-		{"untouched", []bool{false, false}, []int{0, 2000}, nil},
+		{"first touch without release", []bool{false, true}, []int{1}},
+		{"brief tap", []bool{false, true, false}, []int{1}},
+		{"touch held before delivery", []bool{true, true, true, false}, nil},
+		{"fresh touch after held at startup", []bool{true, true, false, true, true}, []int{3}},
+		{"continuous touch triggers once", []bool{false, true, true, true, true, false}, []int{1}},
+		{"separate touches", []bool{false, true, false, true}, []int{1, 3}},
+		{"untouched", []bool{false, false}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var detector sportsTouchHoldDetector
-			now := time.Now()
-			if detector.observe(nil, now) {
+			var detector sportsTouchDetector
+			if detector.observe(nil) {
 				t.Fatal("missing robot state triggered a mute")
 			}
 			var got []int
 			for index, touched := range test.touched {
-				if detector.observe(sportsTouchState(touched), now.Add(time.Duration(test.times[index])*time.Millisecond)) {
-					got = append(got, test.times[index])
+				if detector.observe(sportsTouchState(touched)) {
+					got = append(got, index)
 				}
 			}
 			if !reflect.DeepEqual(got, test.mutesAt) {
-				t.Fatalf("muted at %v ms, want %v ms", got, test.mutesAt)
+				t.Fatalf("muted at samples %v, want %v", got, test.mutesAt)
 			}
 		})
 	}
 }
 
-func TestSportsMuteRawTouchHoldWhenReportedTouchIsFalse(t *testing.T) {
+func TestSportsMuteRawTouchWhenReportedTouchIsFalse(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		raw     []uint32
-		times   []int
 		mutesAt []int
 	}{
-		{"one second raw touch", []uint32{1000, 1100, 1100, 1100}, []int{0, 100, 1099, 1100}, []int{1100}},
-		{"sensor noise below threshold", []uint32{1000, 1049, 1050, 1000}, []int{0, 100, 1100, 1200}, nil},
-		{"held touch with noisy readings", []uint32{1000, 1100, 1040, 1045}, []int{0, 100, 500, 1100}, []int{1100}},
-		{"short raw tap", []uint32{1000, 1100, 1000, 1000}, []int{0, 100, 1099, 1100}, nil},
-		{"interrupted raw touches", []uint32{1000, 1100, 1100, 1000, 1100, 1100, 1000}, []int{0, 100, 700, 800, 900, 1500, 1600}, nil},
-		{"initially held raw sensor", []uint32{1100, 1100, 1100}, []int{0, 1000, 2000}, nil},
-		{"release and fresh raw touch", []uint32{1100, 1100, 1000, 1100, 1100}, []int{0, 1000, 1100, 1200, 2200}, []int{2200}},
-		{"zero reading is not a baseline", []uint32{0, 1000, 1000, 1000}, []int{0, 100, 1100, 1200}, nil},
-		{"long raw hold triggers once", []uint32{1000, 1100, 1100, 1100, 1100}, []int{0, 100, 1100, 1200, 3000}, []int{1100}},
+		{"first raw touch", []uint32{1000, 1100}, []int{1}},
+		{"sensor noise below threshold", []uint32{1000, 1049, 1050, 1000}, nil},
+		{"held touch with noisy readings", []uint32{1000, 1100, 1040, 1045}, []int{1}},
+		{"brief raw tap", []uint32{1000, 1100, 1000}, []int{1}},
+		{"separate raw touches", []uint32{1000, 1100, 1000, 1100}, []int{1, 3}},
+		{"initially held raw sensor", []uint32{1100, 1100, 1100}, nil},
+		{"release and fresh raw touch", []uint32{1100, 1100, 1000, 1100, 1100}, []int{3}},
+		{"zero reading is not a baseline", []uint32{0, 1000, 1000, 1000}, nil},
+		{"continuous raw touch triggers once", []uint32{1000, 1100, 1100, 1100, 1100}, []int{1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var detector sportsTouchHoldDetector
-			now := time.Now()
+			var detector sportsTouchDetector
 			var got []int
 			for index, raw := range test.raw {
 				state := sportsTouchState(false)
 				state.TouchData.RawTouchValue = raw
-				if detector.observe(state, now.Add(time.Duration(test.times[index])*time.Millisecond)) {
-					got = append(got, test.times[index])
+				if detector.observe(state) {
+					got = append(got, index)
 				}
 			}
 			if !reflect.DeepEqual(got, test.mutesAt) {
-				t.Fatalf("muted at %v ms, want %v ms with reported touch always false", got, test.mutesAt)
+				t.Fatalf("muted at samples %v, want %v with reported touch always false", got, test.mutesAt)
 			}
 		})
 	}
 }
 
 func TestSportsMuteRawTouchSurvivesReportedTouchFlicker(t *testing.T) {
-	var detector sportsTouchHoldDetector
-	now := time.Now()
+	var detector sportsTouchDetector
 	for index, sample := range []struct {
 		raw     uint32
 		touched bool
-		at      time.Duration
 	}{
-		{1000, false, 0},
-		{1100, true, 100 * time.Millisecond},
-		{1040, false, 500 * time.Millisecond},
-		{1045, false, 1100 * time.Millisecond},
+		{1000, false},
+		{1100, true},
+		{1040, false},
+		{1045, false},
 	} {
 		state := sportsTouchState(sample.touched)
 		state.TouchData.RawTouchValue = sample.raw
-		if muted, want := detector.observe(state, now.Add(sample.at)), index == 3; muted != want {
+		if muted, want := detector.observe(state), index == 1; muted != want {
 			t.Fatalf("sample %d: muted=%t, want %t despite the interpreted touch flag dropping", index, muted, want)
 		}
 	}
 }
 
-func TestSportsMuteMissingTouchDataResetsHold(t *testing.T) {
+func TestSportsMuteReportedTouchFromRobotLogTriggersImmediately(t *testing.T) {
+	var detector sportsTouchDetector
+	idle := sportsTouchState(false)
+	idle.TouchData.RawTouchValue = 5618
+	if detector.observe(idle) {
+		t.Fatal("the untouched baseline muted the game")
+	}
+	contact := sportsTouchState(true)
+	contact.TouchData.RawTouchValue = 5630
+	if !detector.observe(contact) {
+		t.Fatal("the robot's reported touch did not mute on the first contact sample")
+	}
+}
+
+func TestSportsMuteMissingTouchDataRequiresFreshContact(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		state *vectorpb.RobotState
@@ -151,33 +155,31 @@ func TestSportsMuteMissingTouchDataResetsHold(t *testing.T) {
 		{"button press without touch data", &vectorpb.RobotState{Status: uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_BUTTON_PRESSED)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var detector sportsTouchHoldDetector
-			now := time.Now()
-			for index, state := range []*vectorpb.RobotState{
-				sportsTouchState(false), sportsTouchState(true), test.state,
+			var detector sportsTouchDetector
+			for _, state := range []*vectorpb.RobotState{
+				sportsTouchState(true), test.state,
 				sportsTouchState(true), sportsTouchState(true),
-				sportsTouchState(false), sportsTouchState(true),
+				sportsTouchState(false),
 			} {
-				if detector.observe(state, now.Add(time.Duration(index)*time.Second)) {
+				if detector.observe(state) {
 					t.Fatal("missing sensor data allowed an interrupted or existing touch to mute")
 				}
 			}
-			if !detector.observe(sportsTouchState(true), now.Add(7*time.Second)) {
-				t.Fatal("fresh one-second touch after missing sensor data did not mute")
+			if !detector.observe(sportsTouchState(true)) {
+				t.Fatal("fresh touch after missing sensor data did not mute immediately")
 			}
 		})
 	}
 }
 
 func TestSportsMuteIgnoresButtonPresses(t *testing.T) {
-	var detector sportsTouchHoldDetector
-	now := time.Now()
-	for index, pressed := range []bool{false, true, true, false} {
+	var detector sportsTouchDetector
+	for _, pressed := range []bool{false, true, true, false} {
 		state := sportsTouchState(false)
 		if pressed {
 			state.Status = uint32(vectorpb.RobotStatus_ROBOT_STATUS_IS_BUTTON_PRESSED)
 		}
-		if detector.observe(state, now.Add(time.Duration(index)*time.Second)) {
+		if detector.observe(state) {
 			t.Fatal("a button press without touching the sensor triggered a mute")
 		}
 	}
@@ -442,7 +444,7 @@ func (client *sportsMuteRobotClient) ExternalAudioStreamPlayback(ctx context.Con
 	return client.chime, client.chimeError
 }
 
-func TestSportsTouchHoldInterruptsSpeechAndReleasesControlWithoutRetry(t *testing.T) {
+func TestSportsTouchImmediatelyInterruptsSpeechAndReleasesControlWithoutRetry(t *testing.T) {
 	for _, test := range []struct {
 		source, taskSource string
 		rawTouch           bool
@@ -465,10 +467,7 @@ func TestSportsTouchHoldInterruptsSpeechAndReleasesControlWithoutRetry(t *testin
 			case <-time.After(time.Second):
 				t.Fatal("announcement did not start")
 			}
-			for index, touched := range []bool{false, true, true} {
-				if index == 2 {
-					time.Sleep(sportsTouchHoldDuration + 50*time.Millisecond)
-				}
+			for _, touched := range []bool{false, true} {
 				state := sportsTouchState(touched)
 				if test.rawTouch {
 					// Real raw sensor contact must interrupt speech even when the
@@ -492,7 +491,7 @@ func TestSportsTouchHoldInterruptsSpeechAndReleasesControlWithoutRetry(t *testin
 					t.Fatal("interrupted presentation retained the face for batching")
 				}
 			case <-time.After(3 * time.Second):
-				t.Fatal("one-second touch did not interrupt blocked speech")
+				t.Fatal("first touch did not interrupt blocked speech without further sensor samples")
 			}
 			if len(client.controls) != 2 || len(taskQueue) != 0 || !sportsTaskIsMuted(task) {
 				t.Fatal("mute did not stop remaining pages, release live control, and suppress retries")

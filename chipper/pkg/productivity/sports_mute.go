@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	sportsTouchHoldDuration       = time.Second
 	sportsTouchRawThreshold       = 50
 	sportsTouchRawRelease         = 25
 	sportsMuteConfirmationTimeout = 12 * time.Second
@@ -86,18 +85,17 @@ drain:
 	}
 }
 
-type sportsTouchHoldDetector struct {
+type sportsTouchDetector struct {
 	initialized bool
 	touched     bool
-	touchedAt   time.Time
 	rawBaseline uint32
 	rawTouched  bool
 }
 
-func (detector *sportsTouchHoldDetector) observe(state *vectorpb.RobotState, now time.Time) bool {
+func (detector *sportsTouchDetector) observe(state *vectorpb.RobotState) bool {
 	if state == nil || state.GetTouchData() == nil {
-		// Missing sensor data cannot establish continuous contact.
-		*detector = sportsTouchHoldDetector{}
+		// Missing sensor data cannot establish a fresh touch.
+		*detector = sportsTouchDetector{}
 		return false
 	}
 	touch := state.GetTouchData()
@@ -111,8 +109,8 @@ func (detector *sportsTouchHoldDetector) observe(state *vectorpb.RobotState, now
 		}
 		threshold := uint32(sportsTouchRawThreshold)
 		if detector.rawTouched {
-			// A lower release threshold keeps small fluctuations from resetting
-			// the one-second hold after contact has already been detected.
+			// A lower release threshold keeps small fluctuations from counting
+			// an existing touch as a new contact.
 			threshold = sportsTouchRawRelease
 		}
 		detector.rawTouched = raw-detector.rawBaseline > threshold
@@ -126,22 +124,10 @@ func (detector *sportsTouchHoldDetector) observe(state *vectorpb.RobotState, now
 		detector.initialized, detector.touched = true, touched
 		return false
 	}
-	if !touched {
-		detector.touched = false
-		detector.touchedAt = time.Time{}
-		return false
-	}
-	if !detector.touched {
-		detector.touched = true
-		detector.touchedAt = now
-		return false
-	}
-	if detector.touchedAt.IsZero() || now.Sub(detector.touchedAt) < sportsTouchHoldDuration {
-		return false
-	}
-	// Mute while the sensor is still touched, once per continuous hold.
-	detector.touchedAt = time.Time{}
-	return true
+	// Mute on the first sample of fresh contact, with no hold or release delay.
+	freshTouch := touched && !detector.touched
+	detector.touched = touched
+	return freshTouch
 }
 
 // Listen only during presentation, so touches while idle, driving, or delivering
@@ -164,7 +150,7 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 	muted := false // Read only after done closes.
 	go func() {
 		defer close(done)
-		var detector sportsTouchHoldDetector
+		var detector sportsTouchDetector
 		var samples int
 		var rawMin, rawMax uint32
 		var reportedTouchSeen bool
@@ -194,18 +180,13 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 				}
 				reportedTouchSeen = reportedTouchSeen || touch.GetIsBeingTouched()
 			}
-			wasHolding := !detector.touchedAt.IsZero()
-			shouldMute := detector.observe(state, time.Now())
-			if !wasHolding && !detector.touchedAt.IsZero() {
-				logger.Println(fmt.Sprintf("Productivity: Sports mute touch hold started for %s: raw=%d baseline=%d reported_touch=%t", task.RobotESN, state.GetTouchData().GetRawTouchValue(), detector.rawBaseline, state.GetTouchData().GetIsBeingTouched()))
-			}
-			if !shouldMute {
+			if !detector.observe(state) {
 				continue
 			}
 			muteSportsEvent(task)
 			muted = true
 			stopPresentation()
-			logger.Println("Productivity: Muted " + task.sportsEventSource + " event " + task.sportsEventID + " until the final result for " + task.RobotESN)
+			logger.Println(fmt.Sprintf("Productivity: Muted %s event %s until the final result for %s after sensor touch: raw=%d baseline=%d reported_touch=%t", task.sportsEventSource, task.sportsEventID, task.RobotESN, state.GetTouchData().GetRawTouchValue(), detector.rawBaseline, state.GetTouchData().GetIsBeingTouched()))
 			if ip := robotIPForESN(task.RobotESN); ip != "" {
 				stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				err := stopReminderAnimationAudio(stopCtx, ip)
