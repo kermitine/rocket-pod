@@ -155,7 +155,7 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 				err := stopReminderAnimationAudio(stopCtx, ip)
 				cancel()
 				if err != nil {
-					logger.Println("Productivity: Could not stop sports audio before releasing control: " + err.Error())
+					logger.Println("Productivity: Could not stop sports audio before mute confirmation: " + err.Error())
 				}
 			}
 			return
@@ -168,8 +168,9 @@ func startSportsMuteListener(ctx context.Context, robot vectorpb.ExternalInterfa
 	}
 }
 
-// The interrupted presentation must finish and release control before this
-// runs, so its audio cleanup cannot silence the chime or confirmation speech.
+// Join the interrupted presentation's audio cleanup before this runs. Keep its
+// existing behavior control through feedback so the mute click cannot also
+// activate normal button listening or interrupt a native cliff reaction.
 func confirmSportsEventMuted(parent context.Context, robot *vector.Vector, task Task) {
 	ctx, cancel := context.WithTimeout(parent, sportsMuteConfirmationTimeout)
 	defer cancel()
@@ -185,22 +186,6 @@ func confirmSportsEventMuted(parent context.Context, robot *vector.Vector, task 
 	if ctx.Err() != nil {
 		return
 	}
-	// Use a fresh, bounded control session: the presentation context was
-	// canceled to interrupt SayText, while this speech needs a live context.
-	control, err := robot.Conn.BehaviorControl(ctx)
-	if err != nil {
-		logger.Println("Productivity: Sports mute confirmation control unavailable: " + err.Error())
-		return
-	}
-	if err := acquireBehaviorControl(control); err != nil {
-		logger.Println("Productivity: Sports mute confirmation control failed: " + err.Error())
-		return
-	}
-	defer func() {
-		if err := releaseBehaviorControl(control); err != nil {
-			logger.Println("Productivity: Failed to release sports mute confirmation control: " + err.Error())
-		}
-	}()
 	message := "Game muted."
 	if task.sportsEventSource == "f1" {
 		message = "Session muted."

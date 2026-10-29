@@ -458,7 +458,7 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 	}
 
 	// Keep behavior control on the task context so muting can cancel a blocked
-	// SayText call and still release control cleanly to stop the robot's actions.
+	// SayText call without surrendering control to the button's wake-word behavior.
 	taskCtx := ctx
 	presentationCtx, stopPresentation := context.WithCancel(taskCtx)
 	defer stopPresentation()
@@ -466,13 +466,6 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 	defer func() {
 		if !stopMuteListener() {
 			return
-		}
-		if controlHeld {
-			if err := releaseBehaviorControl(bcClient); err != nil {
-				logger.Println("Productivity: Could not release interrupted sports presentation: " + err.Error())
-				return
-			}
-			controlHeld = false
 		}
 		confirmSportsEventMuted(taskCtx, robot, task)
 	}()
@@ -1185,10 +1178,12 @@ func waitForReminderImage(ctx context.Context) bool {
 }
 
 func acquireBehaviorControl(bcClient behaviorControlStream) error {
+	// Notifications must remain below mandatory physical reactions. Overriding
+	// behaviors here also suppresses cliff recovery, including during mute feedback.
 	req := &vectorpb.BehaviorControlRequest{
 		RequestType: &vectorpb.BehaviorControlRequest_ControlRequest{
 			ControlRequest: &vectorpb.ControlRequest{
-				Priority: vectorpb.ControlRequest_OVERRIDE_BEHAVIORS,
+				Priority: vectorpb.ControlRequest_DEFAULT,
 			},
 		},
 	}
