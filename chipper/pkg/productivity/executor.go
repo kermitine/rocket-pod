@@ -475,6 +475,11 @@ func deliverReminderTask(task Task, robot *vector.Vector, faceAlreadyFound bool)
 			controlHeld = false
 		}
 		confirmSportsEventMuted(taskCtx, robot, task)
+		// A deliberate mute ends only this presentation. Keep a successfully
+		// found face for the remaining batch unless the task itself was canceled.
+		if taskCtx.Err() == nil {
+			faceFound = faceAlreadyFound
+		}
 	}()
 	ctx = presentationCtx
 

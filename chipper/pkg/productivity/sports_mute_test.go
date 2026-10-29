@@ -414,7 +414,10 @@ func (client *sportsMuteRobotClient) BehaviorControl(ctx context.Context, _ ...g
 	return client.control, nil
 }
 
-func (client *sportsMuteRobotClient) EventStream(ctx context.Context, _ *vectorpb.EventRequest, _ ...grpc.CallOption) (vectorpb.ExternalInterface_EventStreamClient, error) {
+func (client *sportsMuteRobotClient) EventStream(ctx context.Context, request *vectorpb.EventRequest, options ...grpc.CallOption) (vectorpb.ExternalInterface_EventStreamClient, error) {
+	if request.GetWhiteList() == nil {
+		return client.batchRobotClient.EventStream(ctx, request, options...)
+	}
 	client.eventRequests++
 	return &sportsMuteEventStream{ctx: ctx, events: client.events}, client.eventError
 }
@@ -487,8 +490,8 @@ func TestSportsTouchImmediatelyInterruptsSpeechAndReleasesControlWithoutRetry(t 
 			}
 			select {
 			case faceFound := <-done:
-				if faceFound {
-					t.Fatal("interrupted presentation retained the face for batching")
+				if !faceFound {
+					t.Fatal("deliberately muted presentation lost the face for batching")
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("first touch did not interrupt blocked speech without further sensor samples")
@@ -526,6 +529,77 @@ func TestSportsTouchImmediatelyInterruptsSpeechAndReleasesControlWithoutRetry(t 
 			deliverReminderTask(final, &vector.Vector{Conn: client}, true)
 			if len(client.speech) != 3 || client.eventRequests != 1 {
 				t.Fatal("final score was suppressed or acquired a mute listener")
+			}
+		})
+	}
+}
+
+func TestSportsMutePreservesDetectedFaceForRemainingQueue(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		faces        []bool
+		wantSearches int
+	}{
+		{"NBA detected face", "nba", []bool{true}, 1},
+		{"F1 detected face", "f1", []bool{true}, 1},
+		{"no face before mute", "nba", []bool{false, true}, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setupSportsMuteTest(t, 2)
+			esn := "mute-batch-" + test.name
+			clearReminderReadinessAfterTest(t, esn)
+			now := time.Now()
+			observeHealthyReminder(&reminderConnections, esn, now.Add(-reminderReconnectGrace), now)
+			client := &sportsMuteRobotClient{
+				batchRobotClient: batchRobotClient{faceResults: test.faces},
+				events:           make(chan *vectorpb.EventResponse),
+				speaking:         make(chan struct{}),
+			}
+			robot := &vector.Vector{Conn: client}
+			current := sportsMuteTestTask(test.source, "game", esn, "live")
+			current.Pages = []TaskPage{{Speech: "Current score"}, {Speech: "Must not be spoken"}}
+			for _, id := range []string{"second", "third"} {
+				if !enqueueTask(Task{ID: id, RobotESN: esn, Source: "test", Pages: []TaskPage{{Speech: id}}, configurationGeneration: currentConfigurationGeneration()}) {
+					t.Fatal("could not enqueue the remaining notification")
+				}
+			}
+			done := make(chan struct{})
+			go func() {
+				processReminderBatch(current, taskQueue, func(task Task, reuse bool) bool {
+					return deliverReminderTask(task, robot, reuse)
+				})
+				close(done)
+			}()
+			select {
+			case <-client.speaking:
+			case <-time.After(3 * time.Second):
+				t.Fatal("announcement did not start after the face search")
+			}
+			for _, touched := range []bool{false, true} {
+				event := &vectorpb.EventResponse{Event: &vectorpb.Event{EventType: &vectorpb.Event_RobotState{RobotState: sportsTouchState(touched)}}}
+				select {
+				case client.events <- event:
+				case <-time.After(time.Second):
+					t.Fatal("touch event was not consumed")
+				}
+			}
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("remaining notifications did not finish after muting")
+			}
+			confirmation := "Game muted."
+			if test.source == "f1" {
+				confirmation = "Session muted."
+			}
+			if want := []string{"Current score", confirmation, "second", "third"}; !reflect.DeepEqual(client.speech, want) {
+				t.Fatalf("spoken notifications=%v, want %v", client.speech, want)
+			}
+			if client.searches != test.wantSearches || client.turns != 1 {
+				t.Fatalf("searches=%d, turns=%d; want searches=%d, turns=1", client.searches, client.turns, test.wantSearches)
+			}
+			if len(taskQueue) != 0 || !sportsTaskIsMuted(current) || client.batteryCalls < 6 {
+				t.Fatal("mute did not preserve the queue flow and per-notification readiness checks")
 			}
 		})
 	}

@@ -40,7 +40,9 @@ While notifications are queued, Vector searches for a face before each one until
 he finds someone. Once he successfully faces that person, the remaining queued
 notifications play in order without repeating the search or approach. A new
 search is needed after the queue empties, the target robot or settings change,
-or a delivery is interrupted. Battery and bedtime checks still apply to each
+or a delivery is interrupted. Deliberately muting a sports update preserves an
+already detected face, so the remaining queued notifications continue without
+another search or approach. Battery and bedtime checks still apply to each
 notification.
 
 In **Productivity**, adjust **Face-search turn speed** from 0.5x to 8.0x and click
