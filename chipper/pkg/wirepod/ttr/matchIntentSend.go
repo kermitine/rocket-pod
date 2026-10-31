@@ -303,7 +303,7 @@ func ProcessTextAll(req interface{}, voiceText string, intents []vars.JsonIntent
 		// Look for a perfect match first
 		for _, b := range intents {
 			for _, c := range b.Keyphrases {
-				if voiceText == strings.ToLower(c) {
+				if matchesExactIntentPhrase(voiceText, c) {
 					logger.Println("Bot " + botSerial + " Perfect match for intent " + b.Name + " (" + strings.ToLower(c) + ")")
 					if isOpus {
 						ParamChecker(req, b.Name, voiceText, botSerial)
@@ -321,13 +321,13 @@ func ProcessTextAll(req interface{}, voiceText string, intents []vars.JsonIntent
 			}
 			intentNum = intentNum + 1
 		}
-		// Not found? Then let's be happy with a bare substring search
+		// Fall back to partial phrases for intents that allow them.
 		if !successMatched {
 			intentNum = 0
 			matched = 0
 			for _, b := range intents {
 				for _, c := range b.Keyphrases {
-					if strings.Contains(voiceText, strings.ToLower(c)) && !b.RequireExactMatch {
+					if !b.RequireExactMatch && matchesPartialIntentPhrase(voiceText, c, b.Name) {
 						logger.Println("Bot " + botSerial + " Partial match for intent " + b.Name + " (" + strings.ToLower(c) + ")")
 						if isOpus {
 							ParamChecker(req, b.Name, voiceText, botSerial)

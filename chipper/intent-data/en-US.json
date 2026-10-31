@@ -151,12 +151,12 @@
 	},
 	{
 		"name": "intent_imperative_affirmative",
-		"keyphrases" : ["yes", "correct", "sure", "yes please", "ok", "okay", "yep", "yeah", "absolutely", "definitely", "sounds good", "of course", "please do", "go ahead", "that works" ],
+		"keyphrases" : ["yes", "correct", "sure", "yes please", "ok", "okay", "yep", "yup", "yeah", "absolutely", "definitely", "sounds good", "of course", "please do", "go ahead", "that works" ],
 		"requiresexact": false
 	},
 	{
 		"name": "intent_imperative_negative", 
-		"keyphrases" : ["no", "dont", "don't", "no thanks", "no thank you", "nope", "nah", "not really" ],
+		"keyphrases" : ["no", "dont", "don't", "no thanks", "no thank you", "nope", "nah", "not really", "i said no", "no more cards" ],
 		"requiresexact": true
 	},
 	{	
